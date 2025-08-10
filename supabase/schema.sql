@@ -1,0 +1,103 @@
+-- Schema for SIP+ Tracking
+-- Run this in Supabase SQL editor
+
+-- profiles (link to auth.users)
+create table if not exists public.profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  name text,
+  role text check (role in ('officer','admin')) default 'officer'
+);
+alter table public.profiles enable row level security;
+create policy if not exists "profiles are self-readable" on public.profiles
+  for select using (auth.uid() = id);
+create policy if not exists "profiles are self-writable" on public.profiles
+  for update using (auth.uid() = id);
+-- Allow officers to insert their own profile row on first sign-in
+create policy if not exists "profiles are self-insertable" on public.profiles
+  for insert with check (auth.uid() = id);
+
+-- schools
+create table if not exists public.schools (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  category text not null check (category in ('SK','SMK')),
+  district text not null,
+  address text,
+  contact text
+);
+-- Prevent duplicate schools when reseeding
+alter table public.schools
+  add constraint if not exists schools_name_district_category_key unique (name, district, category);
+alter table public.schools enable row level security;
+create policy if not exists "schools readable to authenticated" on public.schools
+  for select using (auth.role() = 'authenticated');
+create policy if not exists "schools insert by authenticated" on public.schools
+  for insert with check (auth.role() = 'authenticated');
+create policy if not exists "schools update by authenticated" on public.schools
+  for update using (auth.role() = 'authenticated');
+create policy if not exists "schools delete by authenticated" on public.schools
+  for delete using (auth.role() = 'authenticated');
+
+-- visits
+create table if not exists public.visits (
+  id uuid primary key default gen_random_uuid(),
+  school_id uuid not null references public.schools(id) on delete restrict,
+  officer_id uuid not null references public.profiles(id) on delete restrict,
+  visit_date date not null default (now()::date),
+  status text default 'draft',
+  created_at timestamptz not null default now()
+);
+alter table public.visits enable row level security;
+create policy if not exists "officers read own visits" on public.visits
+  for select using (officer_id = auth.uid());
+create policy if not exists "officers insert own visits" on public.visits
+  for insert with check (officer_id = auth.uid());
+create policy if not exists "officers update own visits" on public.visits
+  for update using (officer_id = auth.uid());
+
+-- visit_sections
+create table if not exists public.visit_sections (
+  id uuid primary key default gen_random_uuid(),
+  visit_id uuid not null references public.visits(id) on delete cascade,
+  section_code text not null check (section_code in ('1','2','3.1','3.2','3.3')),
+  evidences jsonb default '[]'::jsonb,
+  remarks text,
+  score int check (score between 0 and 4),
+  unique (visit_id, section_code)
+);
+alter table public.visit_sections enable row level security;
+create policy if not exists "read sections of own visits" on public.visit_sections
+  for select using (exists (select 1 from public.visits v where v.id = visit_id and v.officer_id = auth.uid()));
+create policy if not exists "write sections of own visits" on public.visit_sections
+  for insert with check (exists (select 1 from public.visits v where v.id = visit_id and v.officer_id = auth.uid()));
+create policy if not exists "update sections of own visits" on public.visit_sections
+  for update using (exists (select 1 from public.visits v where v.id = visit_id and v.officer_id = auth.uid()));
+
+-- Seed: Raub district schools (SK & SMK)
+insert into public.schools (name, category, district)
+values
+  -- SK (Primary)
+  ('SK Gali', 'SK', 'Raub'),
+  ('SK Dong', 'SK', 'Raub'),
+  ('SK Raub', 'SK', 'Raub'),
+  ('SK Sungai Ruan', 'SK', 'Raub'),
+  ('SK Cheroh', 'SK', 'Raub'),
+  ('SK Tras', 'SK', 'Raub'),
+  ('SK Batu Talam', 'SK', 'Raub'),
+  ('SK Ulu Gali', 'SK', 'Raub'),
+  ('SK Sega', 'SK', 'Raub'),
+  ('SK Tersang', 'SK', 'Raub')
+on conflict (name, district, category) do nothing;
+
+insert into public.schools (name, category, district)
+values
+  -- SMK (Secondary)
+  ('SMK Mahmud Raub', 'SMK', 'Raub'),
+  ('SMK Gali', 'SMK', 'Raub'),
+  ('SMK Dong', 'SMK', 'Raub'),
+  ('SMK Sungai Ruan', 'SMK', 'Raub'),
+  ('SMK Tengku Kudin', 'SMK', 'Raub'),
+  ('SMK Tersang', 'SMK', 'Raub')
+on conflict (name, district, category) do nothing;
+
+
