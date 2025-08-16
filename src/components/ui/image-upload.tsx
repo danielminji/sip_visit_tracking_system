@@ -52,7 +52,12 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
   };
 
   const handleUpload = async () => {
-    if (!selectedFile || !visitId) return;
+    if (!selectedFile) return;
+    
+    if (!visitId) {
+      alert('Please save the visit first before uploading images');
+      return;
+    }
 
     setIsUploading(true);
     setUploadProgress(0);
@@ -262,11 +267,11 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
               onChange={(e) => setDescription(e.target.value)}
             />
             
-            <Button
-              onClick={handleUpload}
-              disabled={isUploading || !visitId}
-              className="w-full"
-            >
+                         <Button
+               onClick={handleUpload}
+               disabled={isUploading}
+               className="w-full"
+             >
               {isUploading ? (
                 <>
                   <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />

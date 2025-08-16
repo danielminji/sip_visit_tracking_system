@@ -128,7 +128,16 @@ const VisitForm = () => {
   };
 
   const progress = useMemo(() => {
-    const filled = Object.values(localSections).filter(s => typeof s.score === 'number' || (s.remarks && s.remarks.trim().length > 0)).length;
+    const filled = Object.values(localSections).filter(s => {
+      // Check if standard has meaningful data
+      const hasScore = typeof s.score === 'number';
+      const hasRemarks = s.remarks && s.remarks.trim().length > 0;
+      const hasDoText = s.doText && s.doText.trim().length > 0;
+      const hasActText = s.actText && s.actText.trim().length > 0;
+      const hasEvidences = s.evidences && s.evidences.some(Boolean);
+      
+      return hasScore || hasRemarks || hasDoText || hasActText || hasEvidences;
+    }).length;
     return Math.round((filled / 5) * 100);
   }, [localSections]);
 
@@ -137,16 +146,38 @@ const VisitForm = () => {
       const { data: user } = await supabase.auth.getUser();
       const officerId = user.user?.id;
       if (!officerId || !schoolId) throw new Error("Select school first");
+      
+      // Determine visit status based on completion
+      const completedStandards = Object.values(localSections).filter(s => {
+        const hasScore = typeof s.score === 'number';
+        const hasRemarks = s.remarks && s.remarks.trim().length > 0;
+        const hasDoText = s.doText && s.doText.trim().length > 0;
+        const hasActText = s.actText && s.actText.trim().length > 0;
+        const hasEvidences = s.evidences && s.evidences.some(Boolean);
+        
+        return hasScore || hasRemarks || hasDoText || hasActText || hasEvidences;
+      }).length;
+      
+      const visitStatus = completedStandards >= 3 ? 'completed' : 'draft';
+      
       // Ensure a matching profile row exists for FK constraint and save officer name
       await supabase.from('profiles').upsert({ id: officerId, name: officer || null }, { onConflict: 'id' });
+      
       const { data: visit, error } = await supabase
         .from("visits")
-        .insert({ school_id: schoolId, officer_id: officerId, visit_date: visitDate || undefined, status: 'draft' })
+        .insert({ 
+          school_id: schoolId, 
+          officer_id: officerId, 
+          visit_date: visitDate || undefined, 
+          status: visitStatus 
+        })
         .select("id")
         .single();
       if (error) throw error;
       const visitId = visit.id as string;
       setCurrentVisitId(visitId);
+      
+      // Save section data
       for (const s of Object.values(localSections)) {
         await supabase.from('visit_sections').upsert({
           visit_id: visitId,
@@ -156,23 +187,45 @@ const VisitForm = () => {
           remarks: s.remarks ?? null,
         }, { onConflict: 'visit_id,section_code' });
       }
-      // store per-page data as well
-      for (const std of Object.keys(pageIndex)) {
-        const page = currentPageCode(std);
-        if (!page) continue;
-        const payload = { visit_id: visitId, standard_code: std as any, page_code: page, data: {
-          score: localSections[std]?.score ?? null,
-          evidences: localSections[std]?.evidences ?? [],
-          remarks: localSections[std]?.remarks ?? '',
-          doText: localSections[std]?.doText ?? '',
-          actText: localSections[std]?.actText ?? '',
-        } } as any;
-        await supabase.from('visit_pages').upsert(payload, { onConflict: 'visit_id,page_code' });
+      
+      // Store per-page data for all pages in each standard
+      for (const std of Object.keys(standardsConfig)) {
+        const standardPages = standardsConfig[std]?.pages || [];
+        for (const page of standardPages) {
+          const payload = { 
+            visit_id: visitId, 
+            standard_code: std as any, 
+            page_code: page.code, 
+            data: {
+              score: localSections[std]?.score ?? null,
+              evidences: localSections[std]?.evidences ?? [],
+              remarks: localSections[std]?.remarks ?? '',
+              doText: localSections[std]?.doText ?? '',
+              actText: localSections[std]?.actText ?? '',
+            } 
+          } as any;
+          await supabase.from('visit_pages').upsert(payload, { onConflict: 'visit_id,standard_code,page_code' });
+        }
       }
+      
       return visitId;
     },
     onSuccess: () => {
-      toast({ title: "Saved", description: "Visit saved as draft." });
+      const completedStandards = Object.values(localSections).filter(s => {
+        const hasScore = typeof s.score === 'number';
+        const hasRemarks = s.remarks && s.remarks.trim().length > 0;
+        const hasDoText = s.doText && s.doText.trim().length > 0;
+        const hasActText = s.actText && s.actText.trim().length > 0;
+        const hasEvidences = s.evidences && s.evidences.some(Boolean);
+        
+        return hasScore || hasRemarks || hasDoText || hasActText || hasEvidences;
+      }).length;
+      
+      const status = completedStandards >= 3 ? 'completed' : 'draft';
+      toast({ 
+        title: "Saved", 
+        description: `Visit saved as ${status}. ${completedStandards}/5 standards completed.` 
+      });
       queryClient.invalidateQueries({ queryKey: ["visits"] });
     },
     onError: (e: any) => toast({ title: "Save failed", description: e?.message ?? "Unexpected error", variant: "destructive" }),
@@ -248,9 +301,8 @@ const VisitForm = () => {
     const updatedSections = { ...localSections };
     const updatedAutoFilled = { ...autoFilledFields };
 
+    // Clone data to all pages in this standard
     for (const page of standardPages) {
-      if (page.code === currentPage) continue; // Skip current page
-      
       const pageKey = `${stdCode}-${page.code}`;
       if (!updatedAutoFilled[pageKey]) updatedAutoFilled[pageKey] = new Set();
 
@@ -609,19 +661,6 @@ const VisitForm = () => {
                           );
                         })()}
 
-                        {/* Auto-clone within standard button */}
-                        <div className="mb-4">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleAutoCloneWithinStandard(standard.code.split(' ')[1])}
-                            className="w-full"
-                          >
-                            <Copy className="w-4 h-4 mr-2" />
-                            Auto-Fill Rest of Standard {standard.code.split(' ')[1]}
-                          </Button>
-                        </div>
-                        
                         {/* PLAN Section - Information List */}
                         <div className="space-y-4">
                           <h4 className="font-medium text-foreground text-lg border-b pb-2">PLAN</h4>
@@ -933,7 +972,27 @@ const VisitForm = () => {
                           </div>
                         </div>
 
-
+                        {/* Auto-Fill Section */}
+                        <div className="space-y-4 pt-6 border-t border-border/30">
+                          <div className="flex items-center justify-between">
+                            <h4 className="font-medium text-foreground text-lg">Auto-Fill Options</h4>
+                            <Copy className="w-5 h-5 text-blue-500" />
+                          </div>
+                          <div className="p-4 bg-blue-50/30 rounded-lg border border-blue-200/30">
+                            <p className="text-sm text-muted-foreground mb-3">
+                              After filling in this assessment, you can auto-fill the rest of Standard {standard.code.split(' ')[1]} with the same data.
+                            </p>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleAutoCloneWithinStandard(standard.code.split(' ')[1])}
+                              className="w-full"
+                            >
+                              <Copy className="w-4 h-4 mr-2" />
+                              Auto-Fill Rest of Standard {standard.code.split(' ')[1]}
+                            </Button>
+                          </div>
+                        </div>
 
                         {/* Page navigation for sub-forms in each standard */}
                         <div className="flex items-center justify-between pt-2">

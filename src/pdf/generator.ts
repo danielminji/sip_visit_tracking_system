@@ -80,7 +80,15 @@ export async function generateBorangPdf(data: VisitExport): Promise<Blob> {
     return acc;
   }, {} as Record<string, typeof data.images>);
 
+  // Create a PDF for each section that has data
   for (const s of data.sections) {
+    // Skip sections without meaningful data
+    const hasData = s.score !== undefined || 
+                   s.remarks || 
+                   (s.evidences && s.evidences.some(Boolean));
+    
+    if (!hasData) continue;
+    
     const path = templatePaths[s.code] || pageToPath(s.code as any);
     const bytes = await fetchArrayBuffer(path);
     const doc = await PDFDocument.load(bytes);

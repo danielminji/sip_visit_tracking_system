@@ -222,28 +222,47 @@ export async function generateVisitReportPdf(data: ReportExport): Promise<Blob> 
 // Helper to build SectionInput rows for current in-memory state (used by VisitForm)
 export function buildReportSectionsFromState(localSections: any, pageIndex: Record<string, number>) {
   const out: SectionInput[] = []
-  for (const std of Object.keys(pageIndex)) {
+  
+  // Get all standards from config, not just from pageIndex
+  const allStandards = ['1', '2', '3.1', '3.2', '3.3'] as const
+  
+  for (const std of allStandards) {
     const stdCfg = standardsConfig[std]
-    const code = std as '1'|'2'|'3.1'|'3.2'|'3.3'
-    const page = stdCfg.pages[pageIndex[std] ?? 0]
-    if (!page) continue
-    const ev = (localSections[std]?.evidences ?? []) as boolean[]
-    const checkLen = page.check?.checkboxes?.length ?? 0
-    const evidenceLen = page.evidenceLabels?.length ?? 0
-    out.push({
-      standardCode: code,
-      pageCode: page.code,
-      title: page.title,
-      plan: page.plan ?? [],
-      doText: localSections[std]?.doText ?? '',
-      actText: localSections[std]?.actText ?? '',
-      checklistLabels: page.check?.checkboxes ?? [],
-      checklistChecked: ev.slice(0, checkLen),
-      evidenceLabels: page.evidenceLabels ?? [],
-      evidenceChecked: ev.slice(0, evidenceLen),
-      score: localSections[std]?.score ?? null,
-    })
+    if (!stdCfg) continue
+    
+    // Get all pages for this standard
+    const standardPages = stdCfg.pages || []
+    
+    for (const page of standardPages) {
+      const ev = (localSections[std]?.evidences ?? []) as boolean[]
+      const checkLen = page.check?.checkboxes?.length ?? 0
+      const evidenceLen = page.evidenceLabels?.length ?? 0
+      
+      // Only include pages that have meaningful data
+      const hasData = localSections[std]?.doText || 
+                     localSections[std]?.actText || 
+                     localSections[std]?.score !== undefined ||
+                     (localSections[std]?.evidences && localSections[std].evidences.some(Boolean)) ||
+                     localSections[std]?.remarks
+      
+      if (hasData) {
+        out.push({
+          standardCode: std,
+          pageCode: page.code,
+          title: page.title,
+          plan: page.plan ?? [],
+          doText: localSections[std]?.doText ?? '',
+          actText: localSections[std]?.actText ?? '',
+          checklistLabels: page.check?.checkboxes ?? [],
+          checklistChecked: ev.slice(0, checkLen),
+          evidenceLabels: page.evidenceLabels ?? [],
+          evidenceChecked: ev.slice(0, evidenceLen),
+          score: localSections[std]?.score ?? null,
+        })
+      }
+    }
   }
+  
   return out
 }
 
