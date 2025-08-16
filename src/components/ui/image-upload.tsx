@@ -70,27 +70,34 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
           upsert: false
         });
 
-      if (uploadError) throw uploadError;
+      if (uploadError) {
+        console.error('Storage upload error:', uploadError);
+        // Try to create bucket if it doesn't exist
+        if (uploadError.message.includes('bucket') || uploadError.message.includes('not found')) {
+          throw new Error('Storage bucket not configured. Please run the database migration first.');
+        }
+        throw uploadError;
+      }
 
       // Get public URL
       const { data: urlData } = supabase.storage
         .from('visit-images')
         .getPublicUrl(fileName);
 
-      // Save metadata to database
-      const { data: imageData, error: dbError } = await supabase
-        .from('visit_images')
-        .insert({
-          visit_id: visitId,
-          filename: fileName,
-          original_name: selectedFile.name,
-          mime_type: selectedFile.type,
-          size: selectedFile.size,
-          description: description.trim() || null,
-          section_code: sectionCode || null
-        })
-        .select()
-        .single();
+              // Save metadata to database
+        const { data: imageData, error: dbError } = await supabase
+          .from('visit_images')
+          .insert({
+            visit_id: visitId,
+            filename: fileName,
+            original_name: selectedFile.name,
+            mime_type: selectedFile.type,
+            size: selectedFile.size,
+            description: description.trim() || null,
+            section_code: null // General images for the visit
+          })
+          .select()
+          .single();
 
       if (dbError) throw dbError;
 

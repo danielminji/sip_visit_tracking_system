@@ -5,7 +5,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { FileText, Save, Download, Building2, Calendar, User, Crown, Settings, BookOpen, Trophy, Users, Camera } from "lucide-react";
+import { FileText, Save, Download, Building2, Calendar, User, Crown, Settings, BookOpen, Trophy, Users, Camera, History, Copy } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -16,6 +16,8 @@ import { useToast } from "@/hooks/use-toast";
 import { sectionCoords, standardPages } from "@/pdf/coordinates";
 import { standardsConfig } from "@/standards/config";
 import { ImageUpload } from "@/components/ui/image-upload";
+import { AutoCloneModal } from "@/components/ui/auto-clone-modal";
+import { AutoFilledBadge } from "@/components/ui/auto-filled-badge";
 
 const VisitForm = () => {
   const standards = [
@@ -111,6 +113,12 @@ const VisitForm = () => {
     public_url?: string;
   }>>([]);
   const [currentVisitId, setCurrentVisitId] = useState<string | undefined>();
+
+  // State for auto-clone functionality
+  const [showAutoCloneModal, setShowAutoCloneModal] = useState(false);
+  const [autoCloneType, setAutoCloneType] = useState<'within-standard' | 'from-last-visit'>('within-standard');
+  const [autoCloneStandard, setAutoCloneStandard] = useState<string>('');
+  const [autoFilledFields, setAutoFilledFields] = useState<Record<string, Set<string>>>({});
 
   const currentPageCode = (std: string) => standardPages[std]?.[pageIndex[std] ?? 0];
   const currentPageSchema = (std: string) => {
@@ -214,6 +222,170 @@ const VisitForm = () => {
     }
   };
 
+  // Auto-clone functions
+  const handleAutoCloneWithinStandard = (standardCode: string) => {
+    setAutoCloneType('within-standard');
+    setAutoCloneStandard(standardCode);
+    setShowAutoCloneModal(true);
+  };
+
+  const handleAutoCloneFromLastVisit = () => {
+    setAutoCloneType('from-last-visit');
+    setShowAutoCloneModal(true);
+  };
+
+  const executeAutoCloneWithinStandard = async () => {
+    const stdCode = autoCloneStandard;
+    const currentPage = currentPageCode(stdCode);
+    if (!currentPage) return;
+
+    // Get current page data
+    const currentData = localSections[stdCode];
+    if (!currentData) return;
+
+    // Clone to all other pages in this standard
+    const standardPages = standardsConfig[stdCode]?.pages || [];
+    const updatedSections = { ...localSections };
+    const updatedAutoFilled = { ...autoFilledFields };
+
+    for (const page of standardPages) {
+      if (page.code === currentPage) continue; // Skip current page
+      
+      const pageKey = `${stdCode}-${page.code}`;
+      if (!updatedAutoFilled[pageKey]) updatedAutoFilled[pageKey] = new Set();
+
+      // Clone evidences
+      if (currentData.evidences) {
+        updatedSections[stdCode] = {
+          ...updatedSections[stdCode],
+          evidences: [...currentData.evidences],
+        };
+        updatedAutoFilled[pageKey].add('evidences');
+      }
+
+      // Clone other fields
+      if (currentData.doText) {
+        updatedSections[stdCode] = {
+          ...updatedSections[stdCode],
+          doText: currentData.doText,
+        };
+        updatedAutoFilled[pageKey].add('doText');
+      }
+
+      if (currentData.actText) {
+        updatedSections[stdCode] = {
+          ...updatedSections[stdCode],
+          actText: currentData.actText,
+        };
+        updatedAutoFilled[pageKey].add('actText');
+      }
+
+      if (currentData.remarks) {
+        updatedSections[stdCode] = {
+          ...updatedSections[stdCode],
+          remarks: currentData.remarks,
+        };
+        updatedAutoFilled[pageKey].add('remarks');
+      }
+
+      if (currentData.score !== undefined) {
+        updatedSections[stdCode] = {
+          ...updatedSections[stdCode],
+          score: currentData.score,
+        };
+        updatedAutoFilled[pageKey].add('score');
+      }
+    }
+
+    setLocalSections(updatedSections);
+    setAutoFilledFields(updatedAutoFilled);
+    toast({ title: "Auto-clone completed", description: `Standard ${stdCode} has been auto-filled` });
+  };
+
+  const executeAutoCloneFromLastVisit = async () => {
+    if (!schoolId) return;
+
+    try {
+      // Get last visit data for this school by the same officer
+      const { data: user } = await supabase.auth.getUser();
+      if (!user.user) return;
+
+      const { data: lastVisit, error } = await supabase
+        .from('visits')
+        .select(`
+          id,
+          visit_sections(section_code, score, evidences, remarks),
+          visit_pages(standard_code, page_code, data)
+        `)
+        .eq('school_id', schoolId)
+        .eq('officer_id', user.user.id)
+        .neq('id', currentVisitId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (error || !lastVisit) {
+        toast({ title: "No previous visit found", description: "Starting with blank forms" });
+        return;
+      }
+
+      // Clone data from last visit
+      const updatedSections = { ...localSections };
+      const updatedAutoFilled = { ...autoFilledFields };
+
+      // Clone visit sections
+      if (lastVisit.visit_sections) {
+        for (const section of lastVisit.visit_sections) {
+          const stdCode = section.section_code;
+          if (updatedSections[stdCode]) {
+            updatedSections[stdCode] = {
+              ...updatedSections[stdCode],
+              score: section.score,
+              evidences: section.evidences || [],
+              remarks: section.remarks,
+            };
+
+            const pageKey = `${stdCode}-general`;
+            if (!updatedAutoFilled[pageKey]) updatedAutoFilled[pageKey] = new Set();
+            updatedAutoFilled[pageKey].add('score');
+            updatedAutoFilled[pageKey].add('evidences');
+            updatedAutoFilled[pageKey].add('remarks');
+          }
+        }
+      }
+
+      // Clone visit pages data
+      if (lastVisit.visit_pages) {
+        for (const page of lastVisit.visit_pages) {
+          const stdCode = page.standard_code;
+          const pageCode = page.page_code;
+          const pageData = page.data || {};
+
+          if (updatedSections[stdCode]) {
+            updatedSections[stdCode] = {
+              ...updatedSections[stdCode],
+              doText: pageData.doText || '',
+              actText: pageData.actText || '',
+            };
+
+            const pageKey = `${stdCode}-${pageCode}`;
+            if (!updatedAutoFilled[pageKey]) updatedAutoFilled[pageKey] = new Set();
+            updatedAutoFilled[pageKey].add('doText');
+            updatedAutoFilled[pageKey].add('actText');
+          }
+        }
+      }
+
+      setLocalSections(updatedSections);
+      setAutoFilledFields(updatedAutoFilled);
+      toast({ title: "Data copied", description: "Previous visit data has been copied to this form" });
+
+    } catch (error: any) {
+      console.error('Error copying from last visit:', error);
+      toast({ title: "Copy failed", description: error.message, variant: "destructive" });
+    }
+  };
+
   return (
     <main className="min-h-screen bg-background">
       <SEO
@@ -311,6 +483,20 @@ const VisitForm = () => {
                 </div>
                 <Progress value={progress} className="h-2" />
               </div>
+
+              {/* Auto-clone from last visit button */}
+              {schoolId && (
+                <div className="pt-4">
+                  <Button
+                    variant="outline"
+                    onClick={handleAutoCloneFromLastVisit}
+                    className="w-full"
+                  >
+                    <History className="w-4 h-4 mr-2" />
+                    Copy from Last Visit to This School
+                  </Button>
+                </div>
+              )}
 
               {/* Image Upload Section */}
               <div className="pt-6 border-t border-border/30">
@@ -422,6 +608,19 @@ const VisitForm = () => {
                             </div>
                           );
                         })()}
+
+                        {/* Auto-clone within standard button */}
+                        <div className="mb-4">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleAutoCloneWithinStandard(standard.code.split(' ')[1])}
+                            className="w-full"
+                          >
+                            <Copy className="w-4 h-4 mr-2" />
+                            Auto-Fill Rest of Standard {standard.code.split(' ')[1]}
+                          </Button>
+                        </div>
                         
                         {/* PLAN Section - Information List */}
                         <div className="space-y-4">
@@ -453,7 +652,16 @@ const VisitForm = () => {
 
                         {/* DO Section - Editable Text Box with Suggestions */}
                         <div className="space-y-4">
-                          <h4 className="font-medium text-foreground text-lg border-b pb-2">DO</h4>
+                          <div className="flex items-center justify-between border-b pb-2">
+                            <h4 className="font-medium text-foreground text-lg">DO</h4>
+                            {(() => {
+                              const code = standard.code.split(' ')[1] as any;
+                              const page = currentPageCode(code);
+                              const pageKey = `${code}-${page}`;
+                              const isAutoFilled = autoFilledFields[pageKey]?.has('doText');
+                              return isAutoFilled ? <AutoFilledBadge /> : null;
+                            })()}
+                          </div>
                           <div className="space-y-3">
                             <Label className="text-sm text-muted-foreground">Implementation Details</Label>
                             <div className="space-y-2">
@@ -578,7 +786,16 @@ const VisitForm = () => {
 
                         {/* ACT Section - Editable Text Box with Suggestions */}
                         <div className="space-y-4">
-                          <h4 className="font-medium text-foreground text-lg border-b pb-2">ACT</h4>
+                          <div className="flex items-center justify-between border-b pb-2">
+                            <h4 className="font-medium text-foreground text-lg">ACT</h4>
+                            {(() => {
+                              const code = standard.code.split(' ')[1] as any;
+                              const page = currentPageCode(code);
+                              const pageKey = `${code}-${page}`;
+                              const isAutoFilled = autoFilledFields[pageKey]?.has('actText');
+                              return isAutoFilled ? <AutoFilledBadge /> : null;
+                            })()}
+                          </div>
                           <div className="space-y-3">
                             <Label className="text-sm text-muted-foreground">Follow-up Actions</Label>
                             <div className="space-y-2">
@@ -637,7 +854,16 @@ const VisitForm = () => {
 
                         {/* Evidence Section */}
                         <div className="space-y-4">
-                          <h4 className="font-medium text-foreground text-lg border-b pb-2">Evidence</h4>
+                          <div className="flex items-center justify-between border-b pb-2">
+                            <h4 className="font-medium text-foreground text-lg">Evidence</h4>
+                            {(() => {
+                              const code = standard.code.split(' ')[1] as any;
+                              const page = currentPageCode(code);
+                              const pageKey = `${code}-${page}`;
+                              const isAutoFilled = autoFilledFields[pageKey]?.has('evidences');
+                              return isAutoFilled ? <AutoFilledBadge /> : null;
+                            })()}
+                          </div>
                           <div className="space-y-3 p-4 bg-purple-50/30 rounded-lg border border-purple-200/30">
                             <div className="space-y-2">
                               {(() => {
@@ -707,24 +933,7 @@ const VisitForm = () => {
                           </div>
                         </div>
 
-                        {/* Standard-specific Image Upload */}
-                        <div className="space-y-4 pt-6 border-t border-border/30">
-                          <div className="flex items-center gap-2">
-                            <Camera className="w-4 h-4 text-primary" />
-                            <Label className="text-sm font-medium text-foreground">Standard {standard.code} Images</Label>
-                          </div>
-                          <ImageUpload
-                            visitId={currentVisitId}
-                            sectionCode={standard.code.split(' ')[1]}
-                            existingImages={visitImages.filter(img => img.section_code === standard.code.split(' ')[1])}
-                            onImageUploaded={(imageData) => {
-                              setVisitImages(prev => [...prev, imageData]);
-                            }}
-                            onImageRemoved={(imageId) => {
-                              setVisitImages(prev => prev.filter(img => img.id !== imageId));
-                            }}
-                          />
-                        </div>
+
 
                         {/* Page navigation for sub-forms in each standard */}
                         <div className="flex items-center justify-between pt-2">
@@ -780,6 +989,22 @@ const VisitForm = () => {
           </Card>
         </div>
       </section>
+
+      {/* Auto-clone Modal */}
+      <AutoCloneModal
+        isOpen={showAutoCloneModal}
+        onClose={() => setShowAutoCloneModal(false)}
+        onConfirm={() => {
+          if (autoCloneType === 'within-standard') {
+            executeAutoCloneWithinStandard();
+          } else {
+            executeAutoCloneFromLastVisit();
+          }
+        }}
+        type={autoCloneType}
+        standardCode={autoCloneStandard}
+        schoolName={schools?.find(s => s.id === schoolId)?.name}
+      />
     </main>
   );
 };
