@@ -1,4 +1,4 @@
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { PDFDocument, StandardFonts, rgb, PDFImage } from 'pdf-lib';
 import { headerCoords, sectionCoords, templatePaths, SectionMap, pageToPath } from './coordinates';
 
 export type VisitExport = {
@@ -9,6 +9,14 @@ export type VisitExport = {
     score?: number | null
     evidences?: boolean[]
     remarks?: string | null
+  }>
+  images?: Array<{
+    id: string
+    filename: string
+    original_name: string
+    description?: string
+    section_code?: string
+    public_url?: string
   }>
 }
 
@@ -39,14 +47,46 @@ function drawMultilineText(page: any, text: string, map: SectionMap['remarks'], 
   });
 }
 
+async function embedImageFromUrl(url: string): Promise<PDFImage | null> {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Failed to fetch image: ${response.statusText}`);
+    const arrayBuffer = await response.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
+    
+    // Try to determine image format from URL or content
+    if (url.includes('.jpg') || url.includes('.jpeg')) {
+      return await PDFImage.embed(uint8Array, 'jpeg');
+    } else if (url.includes('.png')) {
+      return await PDFImage.embed(uint8Array, 'png');
+    } else {
+      // Default to JPEG
+      return await PDFImage.embed(uint8Array, 'jpeg');
+    }
+  } catch (error) {
+    console.error('Failed to embed image:', error);
+    return null;
+  }
+}
+
 export async function generateBorangPdf(data: VisitExport): Promise<Blob> {
   const pdfs: PDFDocument[] = [];
+  
+  // Group images by section code
+  const imagesBySection = (data.images || []).reduce((acc, img) => {
+    const sectionCode = img.section_code || 'general';
+    if (!acc[sectionCode]) acc[sectionCode] = [];
+    acc[sectionCode].push(img);
+    return acc;
+  }, {} as Record<string, typeof data.images>);
+
   for (const s of data.sections) {
     const path = templatePaths[s.code] || pageToPath(s.code as any);
     const bytes = await fetchArrayBuffer(path);
     const doc = await PDFDocument.load(bytes);
     const font = await doc.embedFont(StandardFonts.Helvetica);
     const page = doc.getPages()[0];
+    
     // header on each page
     page.drawText(data.schoolName ?? '', { x: headerCoords.schoolName.x, y: headerCoords.schoolName.y, size: 10, font, color: rgb(0,0,0) });
     page.drawText(data.visitDate ?? '', { x: headerCoords.visitDate.x, y: headerCoords.visitDate.y, size: 10, font, color: rgb(0,0,0) });
@@ -66,6 +106,52 @@ export async function generateBorangPdf(data: VisitExport): Promise<Blob> {
     if (coords?.remarks && s.remarks) {
       drawMultilineText(page, s.remarks, coords.remarks, font);
     }
+
+    // Add images for this section
+    const sectionImages = imagesBySection[s.code] || [];
+    if (sectionImages.length > 0) {
+      // Add images at the bottom of the page
+      let imageY = 100; // Start position for images
+      const imageWidth = 150;
+      const imageHeight = 100;
+      const imagesPerRow = 3;
+      
+      for (let i = 0; i < sectionImages.length; i++) {
+        const img = sectionImages[i];
+        if (img.public_url) {
+          try {
+            const pdfImage = await embedImageFromUrl(img.public_url);
+            if (pdfImage) {
+              const row = Math.floor(i / imagesPerRow);
+              const col = i % imagesPerRow;
+              const x = 50 + col * (imageWidth + 20);
+              const y = imageY - row * (imageHeight + 30);
+              
+              page.drawImage(pdfImage, {
+                x,
+                y,
+                width: imageWidth,
+                height: imageHeight,
+              });
+              
+              // Add image description below
+              if (img.description) {
+                page.drawText(img.description, {
+                  x: x + 5,
+                  y: y - 15,
+                  size: 8,
+                  font,
+                  color: rgb(0.5, 0.5, 0.5),
+                });
+              }
+            }
+          } catch (error) {
+            console.error('Failed to add image to PDF:', error);
+          }
+        }
+      }
+    }
+    
     pdfs.push(doc);
   }
 

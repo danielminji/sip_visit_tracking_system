@@ -73,6 +73,43 @@ create policy if not exists "write sections of own visits" on public.visit_secti
 create policy if not exists "update sections of own visits" on public.visit_sections
   for update using (exists (select 1 from public.visits v where v.id = visit_id and v.officer_id = auth.uid()));
 
+-- visit_images (NEW TABLE for storing image metadata)
+create table if not exists public.visit_images (
+  id uuid primary key default gen_random_uuid(),
+  visit_id uuid not null references public.visits(id) on delete cascade,
+  filename text not null,
+  original_name text not null,
+  mime_type text not null,
+  size integer not null,
+  description text,
+  section_code text check (section_code in ('1','2','3.1','3.2','3.3')),
+  uploaded_at timestamptz not null default now()
+);
+alter table public.visit_images enable row level security;
+create policy if not exists "read images of own visits" on public.visit_images
+  for select using (exists (select 1 from public.visits v where v.id = visit_id and v.officer_id = auth.uid()));
+create policy if not exists "insert images for own visits" on public.visit_images
+  for insert with check (exists (select 1 from public.visits v where v.id = visit_id and v.officer_id = auth.uid()));
+create policy if not exists "delete images of own visits" on public.visit_images
+  for delete using (exists (select 1 from public.visits v where v.id = visit_id and v.officer_id = auth.uid()));
+
+-- visit_pages
+create table if not exists public.visit_pages (
+  id uuid primary key default gen_random_uuid(),
+  visit_id uuid not null references public.visits(id) on delete cascade,
+  standard_code text not null check (standard_code in ('1','2','3.1','3.2','3.3')),
+  page_code text not null,
+  data jsonb not null default '{}'::jsonb,
+  unique (visit_id, page_code)
+);
+alter table public.visit_pages enable row level security;
+create policy if not exists "read pages of own visits" on public.visit_pages
+  for select using (exists (select 1 from public.visits v where v.id = visit_id and v.officer_id = auth.uid()));
+create policy if not exists "write pages of own visits" on public.visit_pages
+  for insert with check (exists (select 1 from public.visits v where v.id = visit_id and v.officer_id = auth.uid()));
+create policy if not exists "update pages of own visits" on public.visit_pages
+  for update using (exists (select 1 from public.visits v where v.id = visit_id and v.officer_id = auth.uid()));
+
 -- Seed: Raub district schools (SK & SMK)
 insert into public.schools (name, category, district)
 values

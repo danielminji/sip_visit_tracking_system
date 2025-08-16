@@ -4,11 +4,42 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Clock, Search, Calendar, User, Eye, Download, Filter } from "lucide-react";
+import { Clock, Search, Calendar, User, Eye, Download, Filter, Camera } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useState, useMemo } from "react";
 import { generateBorangPdf } from "@/pdf/generator";
+
+// Component to show image count for a visit
+const VisitImagesIndicator = ({ visitId }: { visitId: string }) => {
+  const { data: images } = useQuery({
+    queryKey: ["visit-images", visitId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('visit_images')
+        .select('id')
+        .eq('visit_id', visitId);
+      if (error) return [];
+      return data || [];
+    },
+  });
+
+  if (!images || images.length === 0) {
+    return (
+      <div className="flex items-center gap-2 text-muted-foreground">
+        <Camera className="w-4 h-4" />
+        <span className="text-sm">0</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2 text-primary">
+      <Camera className="w-4 h-4" />
+      <span className="text-sm font-medium">{images.length}</span>
+    </div>
+  );
+};
 
 const History = () => {
   const [search, setSearch] = useState("");
@@ -25,6 +56,30 @@ const History = () => {
       return data ?? [];
     },
   });
+
+  // Function to fetch images for a specific visit
+  const fetchVisitImages = async (visitId: string) => {
+    const { data: images, error } = await supabase
+      .from('visit_images')
+      .select('*')
+      .eq('visit_id', visitId)
+      .order('uploaded_at', { ascending: true });
+    
+    if (error) {
+      console.error('Error fetching images:', error);
+      return [];
+    }
+    
+    // Add public URLs to images
+    const imagesWithUrls = (images || []).map(img => ({
+      ...img,
+      public_url: supabase.storage
+        .from('visit-images')
+        .getPublicUrl(img.filename).data.publicUrl
+    }));
+    
+    return imagesWithUrls;
+  };
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
@@ -90,13 +145,14 @@ const History = () => {
                       </div>
                     </TableHead>
                     <TableHead className="font-semibold text-foreground">Status</TableHead>
+                    <TableHead className="font-semibold text-foreground">Images</TableHead>
                     <TableHead className="font-semibold text-foreground text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {(filtered ?? []).length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={5} className="text-center py-16">
+                      <TableCell colSpan={6} className="text-center py-16">
                         <div className="flex flex-col items-center gap-6 text-muted-foreground">
                           <Clock className="w-16 h-16 opacity-50" />
                           <div className="space-y-2">
@@ -116,6 +172,9 @@ const History = () => {
                           <Badge className="bg-green-500/10 text-green-700 border-green-500/20">
                             {v.status ?? 'draft'}
                           </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <VisitImagesIndicator visitId={v.id} />
                         </TableCell>
                         <TableCell className="text-right">
                           <Button size="sm" variant="outline" onClick={async () => {
@@ -161,7 +220,15 @@ const History = () => {
                                   score: saved.score ?? null,
                                 };
                               });
-                              const blob = await generateVisitReportPdf({ schoolName: v.schools?.name ?? '', visitDate: v.visit_date, sections } as any);
+                              
+                              // Fetch images for this visit
+                              const images = await fetchVisitImages(v.id);
+                              const blob = await generateVisitReportPdf({ 
+                                schoolName: v.schools?.name ?? '', 
+                                visitDate: v.visit_date, 
+                                sections,
+                                images
+                              } as any);
                               const url = URL.createObjectURL(blob);
                               window.open(url, '_blank');
                             } catch (error) {
@@ -214,7 +281,15 @@ const History = () => {
                                   score: saved.score ?? null,
                                 };
                               });
-                              const blob = await generateVisitReportPdf({ schoolName: v.schools?.name ?? '', visitDate: v.visit_date, sections } as any);
+                              
+                              // Fetch images for this visit
+                              const images = await fetchVisitImages(v.id);
+                              const blob = await generateVisitReportPdf({ 
+                                schoolName: v.schools?.name ?? '', 
+                                visitDate: v.visit_date, 
+                                sections,
+                                images
+                              } as any);
                               const url = URL.createObjectURL(blob);
                               const a = document.createElement('a');
                               a.href = url; a.download = `visit-${v.id}-report.pdf`; a.click(); URL.revokeObjectURL(url);
@@ -226,22 +301,35 @@ const History = () => {
                             <Download className="w-4 h-4 mr-2" /> Report
                           </Button>
                           <Button size="sm" className="ml-2 gradient-primary text-white border-0" onClick={async () => {
-                            // Fetch saved per-section data for this visit
-                            const { data: secRows, error: secErr } = await supabase
-                              .from('visit_sections')
-                              .select('section_code, score, evidences, remarks')
-                              .eq('visit_id', v.id);
-                            if (secErr) throw secErr;
-                            const sections = (secRows ?? []).map((r: any) => ({
-                              code: r.section_code,
-                              score: r.score,
-                              evidences: r.evidences,
-                              remarks: r.remarks,
-                            }));
-                            const blob = await generateBorangPdf({ schoolName: v.schools?.name ?? '', visitDate: v.visit_date, sections });
-                            const url = URL.createObjectURL(blob);
-                            const a = document.createElement('a');
-                            a.href = url; a.download = `visit-${v.id}.pdf`; a.click(); URL.revokeObjectURL(url);
+                            try {
+                              // Fetch saved per-section data for this visit
+                              const { data: secRows, error: secErr } = await supabase
+                                .from('visit_sections')
+                                .select('section_code, score, evidences, remarks')
+                                .eq('visit_id', v.id);
+                              if (secErr) throw secErr;
+                              const sections = (secRows ?? []).map((r: any) => ({
+                                code: r.section_code,
+                                score: r.score,
+                                evidences: r.evidences,
+                                remarks: r.remarks,
+                              }));
+                              
+                              // Fetch images for this visit
+                              const images = await fetchVisitImages(v.id);
+                              const blob = await generateBorangPdf({ 
+                                schoolName: v.schools?.name ?? '', 
+                                visitDate: v.visit_date, 
+                                sections,
+                                images
+                              });
+                              const url = URL.createObjectURL(blob);
+                              const a = document.createElement('a');
+                              a.href = url; a.download = `visit-${v.id}.pdf`; a.click(); URL.revokeObjectURL(url);
+                            } catch (error) {
+                              console.error('Error generating official PDF:', error);
+                              alert('Error generating official PDF: ' + (error as any)?.message || 'Unknown error');
+                            }
                           }}>
                             <Download className="w-4 h-4 mr-2" /> Official PDF
                           </Button>

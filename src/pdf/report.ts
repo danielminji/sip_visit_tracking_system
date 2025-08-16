@@ -22,6 +22,14 @@ export type ReportExport = {
   pgb?: string
   sesiBimbingan?: string
   sections: SectionInput[]
+  images?: Array<{
+    id: string
+    filename: string
+    original_name: string
+    description?: string
+    section_code?: string
+    public_url?: string
+  }>
 }
 
 function wrapText(text: string, maxWidth: number, font: any, size: number): string[] {
@@ -188,6 +196,19 @@ export async function generateVisitReportPdf(data: ReportExport): Promise<Blob> 
       draw('ACT:', { bold: true })
       drawWrapped(s.actText!)
       y -= 8 // Add space after ACT
+    }
+
+    // IMAGES for this section
+    const sectionImages = (data.images || []).filter(img => img.section_code === s.standardCode);
+    if (sectionImages.length > 0) {
+      ensureRoom(50)
+      draw('IMAGES:', { bold: true })
+      sectionImages.forEach((img, idx) => {
+        const description = img.description || img.original_name;
+        drawWrapped(`• ${description}`, { bullet: undefined });
+        if (idx < sectionImages.length - 1) y -= 2; // Less space between image items
+      });
+      y -= 8 // Add space after IMAGES
     }
     
     // Add more space between sections

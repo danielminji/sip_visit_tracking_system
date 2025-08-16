@@ -5,7 +5,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { FileText, Save, Download, Building2, Calendar, User, Crown, Settings, BookOpen, Trophy, Users } from "lucide-react";
+import { FileText, Save, Download, Building2, Calendar, User, Crown, Settings, BookOpen, Trophy, Users, Camera } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -15,6 +15,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { sectionCoords, standardPages } from "@/pdf/coordinates";
 import { standardsConfig } from "@/standards/config";
+import { ImageUpload } from "@/components/ui/image-upload";
 
 const VisitForm = () => {
   const standards = [
@@ -99,6 +100,18 @@ const VisitForm = () => {
   // per-page state (doText, checkScore, actText, evidences[])
   const [pagesState, setPagesState] = useState<Record<string, { doText: string; checkScore: number|null; actText: string; evidences: boolean[] }>>({});
 
+  // State for managing visit images
+  const [visitImages, setVisitImages] = useState<Array<{
+    id: string;
+    filename: string;
+    original_name: string;
+    description?: string;
+    section_code?: string;
+    uploaded_at: string;
+    public_url?: string;
+  }>>([]);
+  const [currentVisitId, setCurrentVisitId] = useState<string | undefined>();
+
   const currentPageCode = (std: string) => standardPages[std]?.[pageIndex[std] ?? 0];
   const currentPageSchema = (std: string) => {
     const cfg = standardsConfig[std];
@@ -125,6 +138,7 @@ const VisitForm = () => {
         .single();
       if (error) throw error;
       const visitId = visit.id as string;
+      setCurrentVisitId(visitId);
       for (const s of Object.values(localSections)) {
         await supabase.from('visit_sections').upsert({
           visit_id: visitId,
@@ -161,7 +175,12 @@ const VisitForm = () => {
       const schoolName = (schools ?? []).find(s => s.id === schoolId)?.name ?? '';
       const { generateBorangPdf } = await import('@/pdf/generator');
       const sections = Object.values(localSections);
-      const blob = await generateBorangPdf({ schoolName, visitDate, sections } as any);
+      const blob = await generateBorangPdf({ 
+        schoolName, 
+        visitDate, 
+        sections,
+        images: visitImages
+      } as any);
       const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'borang.pdf'; a.click(); URL.revokeObjectURL(url);
     } catch (e: any) {
       toast({ title: 'PDF failed', description: e?.message ?? 'Unexpected error', variant: 'destructive' });
@@ -180,7 +199,15 @@ const VisitForm = () => {
         toast({ title: 'Nothing to export', description: 'Fill any section to generate a report.' });
         return;
       }
-      const blob = await generateVisitReportPdf({ schoolName, visitDate, officerName: officer, pgb, sesiBimbingan, sections } as any);
+      const blob = await generateVisitReportPdf({ 
+        schoolName, 
+        visitDate, 
+        officerName: officer, 
+        pgb, 
+        sesiBimbingan, 
+        sections,
+        images: visitImages
+      } as any);
       const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'visit-report.pdf'; a.click(); URL.revokeObjectURL(url);
     } catch (e: any) {
       toast({ title: 'Report failed', description: e?.message ?? 'Unexpected error', variant: 'destructive' });
@@ -283,6 +310,24 @@ const VisitForm = () => {
                   <span className="text-sm text-muted-foreground">{Math.round((progress ?? 0)/20)}/5 Standards</span>
                 </div>
                 <Progress value={progress} className="h-2" />
+              </div>
+
+              {/* Image Upload Section */}
+              <div className="pt-6 border-t border-border/30">
+                <div className="flex items-center gap-2 mb-4">
+                  <Camera className="w-5 h-5 text-primary" />
+                  <Label className="text-lg font-semibold text-foreground">Proof Images</Label>
+                </div>
+                <ImageUpload
+                  visitId={currentVisitId}
+                  existingImages={visitImages}
+                  onImageUploaded={(imageData) => {
+                    setVisitImages(prev => [...prev, imageData]);
+                  }}
+                  onImageRemoved={(imageId) => {
+                    setVisitImages(prev => prev.filter(img => img.id !== imageId));
+                  }}
+                />
               </div>
               
               {/* Actions moved to bottom Action Buttons card */}
@@ -660,6 +705,25 @@ const VisitForm = () => {
                               })()}
                             </div>
                           </div>
+                        </div>
+
+                        {/* Standard-specific Image Upload */}
+                        <div className="space-y-4 pt-6 border-t border-border/30">
+                          <div className="flex items-center gap-2">
+                            <Camera className="w-4 h-4 text-primary" />
+                            <Label className="text-sm font-medium text-foreground">Standard {standard.code} Images</Label>
+                          </div>
+                          <ImageUpload
+                            visitId={currentVisitId}
+                            sectionCode={standard.code.split(' ')[1]}
+                            existingImages={visitImages.filter(img => img.section_code === standard.code.split(' ')[1])}
+                            onImageUploaded={(imageData) => {
+                              setVisitImages(prev => [...prev, imageData]);
+                            }}
+                            onImageRemoved={(imageId) => {
+                              setVisitImages(prev => prev.filter(img => img.id !== imageId));
+                            }}
+                          />
                         </div>
 
                         {/* Page navigation for sub-forms in each standard */}
