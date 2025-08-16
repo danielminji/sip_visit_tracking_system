@@ -199,7 +199,7 @@ export async function generateVisitReportPdf(data: ReportExport): Promise<Blob> 
     }
 
     // IMAGES for this section
-    const sectionImages = (data.images || []).filter(img => img.section_code === s.standardCode);
+    const sectionImages = (data.images || []).filter(img => img.section_code === s.standardCode || img.section_code === null);
     if (sectionImages.length > 0) {
       ensureRoom(50)
       draw('IMAGES:', { bold: true })

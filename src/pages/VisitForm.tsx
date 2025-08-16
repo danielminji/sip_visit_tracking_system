@@ -5,7 +5,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { FileText, Save, Download, Building2, Calendar, User, Crown, Settings, BookOpen, Trophy, Users, Camera, History, Copy } from "lucide-react";
+import { FileText, Save, Download, Building2, Calendar, User, Crown, Settings, BookOpen, Trophy, Users, Camera, History, Copy, RotateCcw, Plus } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -113,6 +113,7 @@ const VisitForm = () => {
     public_url?: string;
   }>>([]);
   const [currentVisitId, setCurrentVisitId] = useState<string | undefined>();
+  const [isDraftCreated, setIsDraftCreated] = useState(false);
 
   // State for auto-clone functionality
   const [showAutoCloneModal, setShowAutoCloneModal] = useState(false);
@@ -127,6 +128,49 @@ const VisitForm = () => {
     return cfg.pages.find((p) => p.code === code);
   };
 
+  // Create draft visit immediately when school is selected
+  const createDraftVisit = async () => {
+    if (!schoolId || isDraftCreated) return;
+    
+    try {
+      const { data: user } = await supabase.auth.getUser();
+      const officerId = user.user?.id;
+      if (!officerId) return;
+
+      // Ensure profile exists
+      await supabase.from('profiles').upsert({ id: officerId, name: officer || null }, { onConflict: 'id' });
+      
+      // Create draft visit
+      const { data: visit, error } = await supabase
+        .from("visits")
+        .insert({ 
+          school_id: schoolId, 
+          officer_id: officerId, 
+          visit_date: visitDate || undefined, 
+          status: 'draft' 
+        })
+        .select("id")
+        .single();
+      
+      if (error) throw error;
+      
+      setCurrentVisitId(visit.id);
+      setIsDraftCreated(true);
+      toast({ title: "Draft visit created", description: "You can now upload images and fill the form" });
+      
+    } catch (error: any) {
+      console.error('Error creating draft visit:', error);
+      toast({ title: "Failed to create draft", description: error.message, variant: "destructive" });
+    }
+  };
+
+  // Auto-create draft when school is selected
+  useEffect(() => {
+    if (schoolId && !isDraftCreated) {
+      createDraftVisit();
+    }
+  }, [schoolId]);
+
   const progress = useMemo(() => {
     const filled = Object.values(localSections).filter(s => {
       // Check if standard has meaningful data
@@ -140,6 +184,24 @@ const VisitForm = () => {
     }).length;
     return Math.round((filled / 5) * 100);
   }, [localSections]);
+
+  // Function to get individual standard status
+  const getStandardStatus = (standardCode: string) => {
+    const section = localSections[standardCode];
+    if (!section) return 'Not Started';
+    
+    const hasScore = typeof section.score === 'number';
+    const hasRemarks = section.remarks && section.remarks.trim().length > 0;
+    const hasDoText = section.doText && section.doText.trim().length > 0;
+    const hasActText = section.actText && section.actText.trim().length > 0;
+    const hasEvidences = section.evidences && section.evidences.some(Boolean);
+    
+    if (hasScore || hasRemarks || hasDoText || hasActText || hasEvidences) {
+      return 'In Progress';
+    }
+    
+    return 'Not Started';
+  };
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -594,7 +656,16 @@ const VisitForm = () => {
                         <div className="flex-1">
                           <div className="flex items-center gap-3 mb-1">
                             <h3 className="text-lg font-semibold text-foreground">{standard.code}</h3>
-                            <Badge variant="outline" className="text-xs">Not Started</Badge>
+                            <Badge 
+                              variant={getStandardStatus(standard.code.split(' ')[1]) === 'In Progress' ? 'default' : 'outline'} 
+                              className={`text-xs ${
+                                getStandardStatus(standard.code.split(' ')[1]) === 'In Progress' 
+                                  ? 'bg-green-500 text-white border-green-500' 
+                                  : ''
+                              }`}
+                            >
+                              {getStandardStatus(standard.code.split(' ')[1])}
+                            </Badge>
                           </div>
                           <p className="text-base font-medium text-foreground mb-1">{standard.title}</p>
                           <p className="text-sm text-muted-foreground">{standard.description}</p>
@@ -1031,17 +1102,46 @@ const VisitForm = () => {
           <Card className="gradient-card shadow-soft border-0">
             <CardContent className="py-8">
               <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-                 <Button variant="outline" size="lg" className="px-8 py-6" onClick={() => saveMutation.mutate()} disabled={!schoolId || saveMutation.isPending}>
+                <Button variant="outline" size="lg" className="px-8 py-6" onClick={() => saveMutation.mutate()} disabled={!schoolId || saveMutation.isPending}>
                   <Save className="w-5 h-5 mr-3" />
                    {saveMutation.isPending ? 'Saving...' : 'Save Progress'}
                 </Button>
-                 <Button size="lg" variant="secondary" className="px-8 py-6" onClick={handleDownloadReport}>
+                <Button size="lg" variant="secondary" className="px-8 py-6" onClick={handleDownloadReport}>
                   <Download className="w-5 h-5 mr-3" />
                   Download Report
                 </Button>
-                 <Button size="lg" className="gradient-primary hover:shadow-glow transition-all duration-300 text-white border-0 px-8 py-6" onClick={handleGenerate}>
+                <Button size="lg" className="gradient-primary hover:shadow-glow transition-all duration-300 text-white border-0 px-8 py-6" onClick={handleGenerate}>
                   <Download className="w-5 h-5 mr-3" />
                   Generate Official PDF
+                </Button>
+              </div>
+              
+              {/* Additional Action Buttons */}
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mt-6 pt-6 border-t border-border/30">
+                <Button variant="outline" size="lg" className="px-6 py-4" onClick={() => {
+                  // Reset form
+                  setLocalSections({});
+                  setVisitImages([]);
+                  setCurrentVisitId(undefined);
+                  setIsDraftCreated(false);
+                  setAutoFilledFields({});
+                  setSchoolId('');
+                  setVisitDate('');
+                  setOfficer('');
+                  setPgb('');
+                  setSesiBimbingan('');
+                  setPageIndex({});
+                  toast({ title: "Form reset", description: "All data has been cleared" });
+                }}>
+                  <RotateCcw className="w-5 h-5 mr-3" />
+                  Reset Form
+                </Button>
+                <Button size="lg" variant="outline" className="px-6 py-4" onClick={() => {
+                  // Navigate to new visit
+                  window.location.href = '/visits/new';
+                }}>
+                  <Plus className="w-5 h-5 mr-3" />
+                  New Visit
                 </Button>
               </div>
             </CardContent>

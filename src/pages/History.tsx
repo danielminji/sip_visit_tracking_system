@@ -4,7 +4,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Clock, Search, Calendar, User, Eye, Download, Filter, Camera } from "lucide-react";
+import { Clock, Search, Calendar, User, Eye, Download, Filter, Camera, Edit } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useState, useMemo } from "react";
@@ -201,24 +201,49 @@ const History = () => {
                               (secRows ?? []).forEach((r: any) => { secMap[r.section_code] = r; });
                               (pageRows ?? []).forEach((r: any) => { pageMap[r.standard_code] = r; });
                               
-                              const sections = Object.keys(standardsConfig).map((std) => {
+                              const sections: any[] = [];
+                              
+                              // Process all standards and all their pages
+                              Object.keys(standardsConfig).forEach((std) => {
                                 const cfg = standardsConfig[std];
-                                const page = cfg.pages[0];
                                 const saved = secMap[std] || {};
-                                const pageData = pageMap[std]?.data || {};
-                                return {
-                                  standardCode: std as any,
-                                  pageCode: page.code,
-                                  title: page.title,
-                                  plan: page.plan ?? [],
-                                  doText: pageData.doText || '',
-                                  actText: pageData.actText || '',
-                                  checklistLabels: page.check?.checkboxes ?? [],
-                                  checklistChecked: (saved.evidences ?? []).slice(0, (page.check?.checkboxes ?? []).length),
-                                  evidenceLabels: page.evidenceLabels ?? [],
-                                  evidenceChecked: (saved.evidences ?? []).slice(0, (page.evidenceLabels ?? []).length),
-                                  score: saved.score ?? null,
-                                };
+                                
+                                // Add section-level data
+                                if (saved.score !== undefined || saved.remarks || (saved.evidences && saved.evidences.some(Boolean))) {
+                                  sections.push({
+                                    standardCode: std as any,
+                                    pageCode: 'general',
+                                    title: `Standard ${std}`,
+                                    plan: [],
+                                    doText: '',
+                                    actText: '',
+                                    checklistLabels: [],
+                                    checklistChecked: [],
+                                    evidenceLabels: [],
+                                    evidenceChecked: (saved.evidences ?? []),
+                                    score: saved.score ?? null,
+                                  });
+                                }
+                                
+                                // Add page-level data
+                                cfg.pages.forEach((page) => {
+                                  const pageData = pageMap[std]?.data || {};
+                                  if (pageData.doText || pageData.actText) {
+                                    sections.push({
+                                      standardCode: std as any,
+                                      pageCode: page.code,
+                                      title: page.title,
+                                      plan: page.plan ?? [],
+                                      doText: pageData.doText || '',
+                                      actText: pageData.actText || '',
+                                      checklistLabels: page.check?.checkboxes ?? [],
+                                      checklistChecked: (saved.evidences ?? []).slice(0, (page.check?.checkboxes ?? []).length),
+                                      evidenceLabels: page.evidenceLabels ?? [],
+                                      evidenceChecked: (saved.evidences ?? []).slice(0, (page.evidenceLabels ?? []).length),
+                                      score: saved.score ?? null,
+                                    });
+                                  }
+                                });
                               });
                               
                               // Fetch images for this visit
@@ -262,24 +287,49 @@ const History = () => {
                               (secRows ?? []).forEach((r: any) => { secMap[r.section_code] = r; });
                               (pageRows ?? []).forEach((r: any) => { pageMap[r.standard_code] = r; });
                               
-                              const sections = Object.keys(standardsConfig).map((std) => {
+                              const sections: any[] = [];
+                              
+                              // Process all standards and all their pages
+                              Object.keys(standardsConfig).forEach((std) => {
                                 const cfg = standardsConfig[std];
-                                const page = cfg.pages[0];
                                 const saved = secMap[std] || {};
-                                const pageData = pageMap[std]?.data || {};
-                                return {
-                                  standardCode: std as any,
-                                  pageCode: page.code,
-                                  title: page.title,
-                                  plan: page.plan ?? [],
-                                  doText: pageData.doText || '',
-                                  actText: pageData.actText || '',
-                                  checklistLabels: page.check?.checkboxes ?? [],
-                                  checklistChecked: (saved.evidences ?? []).slice(0, (page.check?.checkboxes ?? []).length),
-                                  evidenceLabels: page.evidenceLabels ?? [],
-                                  evidenceChecked: (saved.evidences ?? []).slice(0, (page.evidenceLabels ?? []).length),
-                                  score: saved.score ?? null,
-                                };
+                                
+                                // Add section-level data
+                                if (saved.score !== undefined || saved.remarks || (saved.evidences && saved.evidences.some(Boolean))) {
+                                  sections.push({
+                                    standardCode: std as any,
+                                    pageCode: 'general',
+                                    title: `Standard ${std}`,
+                                    plan: [],
+                                    doText: '',
+                                    actText: '',
+                                    checklistLabels: [],
+                                    checklistChecked: [],
+                                    evidenceLabels: [],
+                                    evidenceChecked: (saved.evidences ?? []),
+                                    score: saved.score ?? null,
+                                  });
+                                }
+                                
+                                // Add page-level data
+                                cfg.pages.forEach((page) => {
+                                  const pageData = pageMap[std]?.data || {};
+                                  if (pageData.doText || pageData.actText) {
+                                    sections.push({
+                                      standardCode: std as any,
+                                      pageCode: page.code,
+                                      title: page.title,
+                                      plan: page.plan ?? [],
+                                      doText: pageData.doText || '',
+                                      actText: pageData.actText || '',
+                                      checklistLabels: page.check?.checkboxes ?? [],
+                                      checklistChecked: (saved.evidences ?? []).slice(0, (page.check?.checkboxes ?? []).length),
+                                      evidenceLabels: page.evidenceLabels ?? [],
+                                      evidenceChecked: (saved.evidences ?? []).slice(0, (page.evidenceLabels ?? []).length),
+                                      score: saved.score ?? null,
+                                    });
+                                  }
+                                });
                               });
                               
                               // Fetch images for this visit
@@ -299,6 +349,12 @@ const History = () => {
                             }
                           }}>
                             <Download className="w-4 h-4 mr-2" /> Report
+                          </Button>
+                          <Button size="sm" variant="outline" className="ml-2" onClick={() => {
+                            // Navigate to edit form with visit data
+                            window.location.href = `/visits/edit/${v.id}`;
+                          }}>
+                            <Edit className="w-4 h-4 mr-2" /> Edit
                           </Button>
                           <Button size="sm" className="ml-2 gradient-primary text-white border-0" onClick={async () => {
                             try {
