@@ -10,6 +10,7 @@ import { Clock, Search, Calendar, User, Eye, Download, Filter, Camera, Edit, Ima
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useState, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { generateVisitReportPdf } from "@/pdf/report";
 import { standardsConfig } from "@/standards/config";
 import { toast } from "@/components/ui/use-toast";
@@ -46,6 +47,7 @@ const VisitImagesIndicator = ({ visitId }: { visitId: string }) => {
 };
 
 const History = () => {
+  const navigate = useNavigate();
   const [search, setSearch] = useState("");
   const [selectedVisitId, setSelectedVisitId] = useState<string | null>(null);
   const [showImageGallery, setShowImageGallery] = useState(false);
@@ -330,7 +332,7 @@ const History = () => {
                               </Button>
                               <Button size="sm" variant="outline" className="ml-2" onClick={() => {
                                 // Navigate to edit form with visit data
-                                window.location.href = `/visits/edit/${v.id}`;
+                                navigate(`/visits/edit/${v.id}`);
                               }}>
                                 <Edit className="w-4 h-4 mr-2" /> Edit
                               </Button>

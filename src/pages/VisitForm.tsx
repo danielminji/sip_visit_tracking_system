@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -22,6 +22,7 @@ import { AutoFilledBadge } from "@/components/ui/auto-filled-badge";
 
 const VisitForm = () => {
   const { id: editVisitId } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const isEditing = !!editVisitId;
   
   const standards = [
@@ -1630,8 +1631,8 @@ const VisitForm = () => {
                     setSesiBimbingan('');
                     setPageIndex({});
                     toast({ title: "Form completed", description: "Redirecting to history page" });
-                    // Redirect to history page
-                    window.location.href = '/history';
+                    // Use React Router navigation instead of window.location
+                    navigate('/history');
                   }}
                 >
                   <Check className="w-5 h-5 mr-3" />
@@ -1661,7 +1662,7 @@ const VisitForm = () => {
                 </Button>
                 <Button size="lg" variant="outline" className="px-6 py-4 hover:bg-primary hover:text-primary-foreground transition-all duration-200" onClick={() => {
                   // Navigate to new visit
-                  window.location.href = '/visits/new';
+                  navigate('/visits/new');
                 }}>
                   <Plus className="w-5 h-4 mr-3" />
                   New Visit
