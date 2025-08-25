@@ -1266,7 +1266,7 @@ const VisitForm = () => {
                               {/* Dropdown Suggestions */}
                               <div className="space-y-2">
                                 <Label className="text-xs text-muted-foreground">Quick Suggestions (click to add)</Label>
-                                <div className="flex flex-wrap gap-2">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                                   {(() => {
                                     const code = standard.code.split(' ')[1] as any;
                                     const page = currentPageSchema(code);
@@ -1290,7 +1290,7 @@ const VisitForm = () => {
                                             }
                                           }));
                                         }}
-                                        className="text-xs h-7 px-2"
+                                        className="text-xs h-auto min-h-8 px-3 py-2 text-left whitespace-normal break-words"
                                       >
                                         {suggestion}
                                       </Button>

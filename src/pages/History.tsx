@@ -141,67 +141,66 @@ const History = () => {
 
   // Function to view visit details with retry mechanism
   const handleViewVisit = async (visit: any) => {
-    const maxRetries = 3;
-    let retryCount = 0;
-    
-    while (retryCount < maxRetries) {
-      try {
-        // Fetch detailed page rows; if none, fall back to synthesizing from visit_sections
-        let pageRows = await fetchPagesForVisit(visit.id);
-        if (!pageRows || pageRows.length === 0) {
-          pageRows = await fetchFallbackSectionsAsPages(visit.id);
-        }
-        // Use the static import instead of dynamic import
-
-        const localSections: any = {};
-        for (const pageRow of pageRows || []) {
-          const pageKey = `${pageRow.standard_code}-${pageRow.page_code}`;
-          localSections[pageKey] = {
-            code: pageKey,
-            standardCode: pageRow.standard_code,
-            pageCode: pageRow.page_code,
-            score: pageRow.data?.score ?? undefined,
-            evidences: pageRow.data?.evidences ?? [],
-            remarks: pageRow.data?.remarks ?? '',
-            doText: pageRow.data?.doText ?? '',
-            actText: pageRow.data?.actText ?? '',
-            lainLainText: pageRow.data?.lainLainText ?? ''
-          };
-        }
-
-        const sections = buildReportSectionsFromState(localSections, {});
-        const images = await fetchVisitImages(visit.id);
-
-        const blob = await generateVisitReportPdf({
-          schoolName: visit.schools?.name ?? '',
-          visitDate: visit.visit_date,
-          officerName: visit.officer_name,
-          pgb: visit.pgb,
-          sesiBimbingan: visit.sesi_bimbingan,
-          sections,
-          images
-        });
-
-        const url = URL.createObjectURL(blob);
-        window.open(url, '_blank');
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-        return; // Success, exit retry loop
-      } catch (error: any) {
-        retryCount++;
-        console.error(`PDF generation attempt ${retryCount} failed:`, error);
-        
-        if (retryCount >= maxRetries) {
-          toast({ 
-            title: 'View failed', 
-            description: `Failed to generate PDF after ${maxRetries} attempts. Please try refreshing the page.`, 
-            variant: 'destructive' 
-          });
-          return;
-        }
-        
-        // Wait before retrying
-        await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+    try {
+      toast({ title: "Loading visit details...", description: "Please wait while we prepare your report." });
+      
+      // Fetch detailed page rows; if none, fall back to synthesizing from visit_sections
+      let pageRows = await fetchPagesForVisit(visit.id);
+      console.log('Fetched page rows:', pageRows);
+      
+      if (!pageRows || pageRows.length === 0) {
+        console.log('No page rows found, trying fallback...');
+        pageRows = await fetchFallbackSectionsAsPages(visit.id);
+        console.log('Fallback page rows:', pageRows);
       }
+
+      const localSections: any = {};
+      for (const pageRow of pageRows || []) {
+        const pageKey = `${pageRow.standard_code}-${pageRow.page_code}`;
+        localSections[pageKey] = {
+          code: pageKey,
+          standardCode: pageRow.standard_code,
+          pageCode: pageRow.page_code,
+          score: pageRow.data?.score ?? undefined,
+          evidences: pageRow.data?.evidences ?? [],
+          remarks: pageRow.data?.remarks ?? '',
+          doText: pageRow.data?.doText ?? '',
+          actText: pageRow.data?.actText ?? '',
+          lainLainText: pageRow.data?.lainLainText ?? ''
+        };
+      }
+      
+      console.log('Built local sections:', localSections);
+
+      const sections = buildReportSectionsFromState(localSections, {});
+      console.log('Built sections for PDF:', sections);
+      
+      const images = await fetchVisitImages(visit.id);
+      console.log('Fetched images:', images);
+
+      const blob = await generateVisitReportPdf({
+        schoolName: visit.schools?.name ?? '',
+        visitDate: visit.visit_date,
+        officerName: visit.officer_name,
+        pgb: visit.pgb,
+        sesiBimbingan: visit.sesi_bimbingan,
+        sections,
+        images
+      });
+
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      
+      toast({ title: "✅ Report opened", description: "Visit report has been opened in a new tab." });
+      
+    } catch (error: any) {
+      console.error('View visit failed:', error);
+      toast({ 
+        title: 'View failed', 
+        description: error?.message || 'Failed to generate PDF. Please try again.', 
+        variant: 'destructive' 
+      });
     }
   };
 
@@ -369,12 +368,14 @@ const History = () => {
                                 <Download className="w-4 h-4 mr-3" /> Report
                               </Button>
                               <Button size="sm" variant="outline" className="ml-2" onClick={() => {
+                                console.log('Navigating to edit visit:', v.id);
                                 // Navigate to edit form with visit data
                                 navigate(`/visits/edit/${v.id}`);
                               }}>
                                 <Edit className="w-4 h-4 mr-2" /> Edit
                               </Button>
                               <Button size="sm" variant="outline" className="ml-2" onClick={() => {
+                                console.log('Opening gallery for visit:', v.id);
                                 setSelectedVisitId(v.id);
                                 setShowImageGallery(true);
                               }}>
@@ -430,18 +431,11 @@ const History = () => {
       </section>
       
       {/* Image Gallery Modal */}
-      <Dialog open={showImageGallery} onOpenChange={setShowImageGallery}>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Visit Images</DialogTitle>
-          </DialogHeader>
       <ImageGallery
         isOpen={showImageGallery}
         onClose={() => setShowImageGallery(false)}
         images={selectedVisitImages || []}
       />
-        </DialogContent>
-      </Dialog>
     </main>
   );
 };
