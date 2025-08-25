@@ -5,11 +5,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { FileText, Save, Download, Building2, Calendar, User, Crown, Settings, BookOpen, Trophy, Users, Camera, History, Copy, RotateCcw, Plus } from "lucide-react";
+import { FileText, Save, Download, Building2, Calendar, User, Crown, Settings, BookOpen, Trophy, Users, Camera, History, Copy, RotateCcw, Plus, Check } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useEffect, useMemo, useState } from "react";
+import { useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -20,6 +21,9 @@ import { AutoCloneModal } from "@/components/ui/auto-clone-modal";
 import { AutoFilledBadge } from "@/components/ui/auto-filled-badge";
 
 const VisitForm = () => {
+  const { id: editVisitId } = useParams<{ id: string }>();
+  const isEditing = !!editVisitId;
+  
   const standards = [
     {
       id: "s1",
@@ -80,8 +84,56 @@ const VisitForm = () => {
     },
   });
 
+  // Load existing visit data when editing
+  const { data: existingVisit } = useQuery({
+    queryKey: ["visit", editVisitId],
+    queryFn: async () => {
+      if (!editVisitId) return null;
+      const { data, error } = await supabase
+        .from("visits")
+        .select(`
+          *,
+          schools(name),
+          visit_sections(section_code, score, evidences, remarks),
+          visit_pages(standard_code, page_code, data)
+        `)
+        .eq("id", editVisitId)
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!editVisitId,
+  });
+
+  // Load existing visit images when editing
+  const { data: existingImages } = useQuery({
+    queryKey: ["visit-images", editVisitId],
+    queryFn: async () => {
+      if (!editVisitId) return [];
+      const { data, error } = await supabase
+        .from("visit_images")
+        .select("*")
+        .eq("visit_id", editVisitId)
+        .order("uploaded_at", { ascending: true });
+      if (error) throw error;
+      
+      // Add public URLs to images
+      const imagesWithUrls = (data || []).map(img => ({
+        ...img,
+        public_url: supabase.storage
+          .from('visit-images')
+          .getPublicUrl(img.filename).data.publicUrl
+      }));
+      
+      return imagesWithUrls;
+    },
+    enabled: !!editVisitId,
+  });
+
   type LocalSection = { 
-    code: '1'|'2'|'3.1'|'3.2'|'3.3'; 
+    code: string; // Now allows page codes like '1-2', '1-3', etc.
+    standardCode: string; // The standard this page belongs to
+    pageCode: string; // The specific page code
     score?: number|null; 
     evidences: boolean[]; 
     remarks?: string;
@@ -89,18 +141,43 @@ const VisitForm = () => {
     actText?: string;
     lainLainText?: string;
   };
-  const [localSections, setLocalSections] = useState<Record<string, LocalSection>>({
-    '1': { code: '1', evidences: Array(sectionCoords['1'].evidences?.length ?? 0).fill(false), doText: '', actText: '', lainLainText: '' },
-    '2': { code: '2', evidences: Array(sectionCoords['2'].evidences?.length ?? 0).fill(false), doText: '', actText: '', lainLainText: '' },
-    '3.1': { code: '3.1', evidences: Array(sectionCoords['3.1'].evidences?.length ?? 0).fill(false), doText: '', actText: '', lainLainText: '' },
-    '3.2': { code: '3.2', evidences: Array(sectionCoords['3.2'].evidences?.length ?? 0).fill(false), doText: '', actText: '', lainLainText: '' },
-    '3.3': { code: '3.3', evidences: Array(sectionCoords['3.3'].evidences?.length ?? 0).fill(false), doText: '', actText: '', lainLainText: '' },
-  });
+  
+  // Initialize sections for all pages in all standards
+  const initializeSections = () => {
+    const sections: Record<string, LocalSection> = {};
+    
+    Object.keys(standardsConfig).forEach(standardCode => {
+      const standard = standardsConfig[standardCode];
+      if (standard?.pages) {
+        standard.pages.forEach(page => {
+          const sectionKey = `${standardCode}-${page.code}`;
+          sections[sectionKey] = {
+            code: sectionKey,
+            standardCode: standardCode,
+            pageCode: page.code,
+            evidences: Array(page.evidenceLabels?.length ?? 0).fill(false),
+            doText: '',
+            actText: '',
+            lainLainText: ''
+          };
+        });
+      }
+    });
+    
+    return sections;
+  };
+  
+  const [localSections, setLocalSections] = useState<Record<string, LocalSection>>(initializeSections());
+
+  // Debug function to log state changes
+  const debugLog = (action: string, standardCode: string, data: any) => {
+    console.log(`[DEBUG] ${action} for Standard ${standardCode}:`, data);
+  };
 
   // page navigation per standard (e.g., 1-2 → 1-3)
   const [pageIndex, setPageIndex] = useState<Record<string, number>>({ '1': 0, '2': 0, '3.1': 0, '3.2': 0, '3.3': 0 });
-  // per-page state (doText, checkScore, actText, evidences[])
-  const [pagesState, setPagesState] = useState<Record<string, { doText: string; checkScore: number|null; actText: string; evidences: boolean[] }>>({});
+  // per-page state (doText, checkScore, actText, evidences[], lainLainText)
+  const [pagesState, setPagesState] = useState<Record<string, { doText: string; checkScore: number|null; actText: string; evidences: boolean[]; lainLainText?: string }>>({});
 
   // State for managing visit images
   const [visitImages, setVisitImages] = useState<Array<{
@@ -166,37 +243,142 @@ const VisitForm = () => {
 
   // Auto-create draft when school is selected
   useEffect(() => {
-    if (schoolId && !isDraftCreated) {
+    if (schoolId && !isEditing) {
       createDraftVisit();
     }
   }, [schoolId]);
 
-  const progress = useMemo(() => {
-    const filled = Object.values(localSections).filter(s => {
-      // Check if standard has meaningful data
-      const hasScore = typeof s.score === 'number';
-      const hasRemarks = s.remarks && s.remarks.trim().length > 0;
-      const hasDoText = s.doText && s.doText.trim().length > 0;
-      const hasActText = s.actText && s.actText.trim().length > 0;
-      const hasEvidences = s.evidences && s.evidences.some(Boolean);
+  // Effect to populate form when editing
+  useEffect(() => {
+    if (isEditing && existingVisit) {
+      setSchoolId(existingVisit.school_id);
+      setVisitDate(existingVisit.visit_date || '');
+      setOfficer(existingVisit.officer_name || '');
+      setPgb(existingVisit.pgb || '');
+      setSesiBimbingan(existingVisit.sesi_bimbingan || '');
+      setVisitImages(existingImages || []);
+
+      // Initialize localSections with all possible pages first
+      const initialSections: any = {};
+      const allStandards = ['1', '2', '3.1', '3.2', '3.3'] as const;
       
-      return hasScore || hasRemarks || hasDoText || hasActText || hasEvidences;
-    }).length;
-    return Math.round((filled / 5) * 100);
+      for (const std of allStandards) {
+        const stdCfg = standardsConfig[std];
+        if (!stdCfg) continue;
+        
+        const standardPages = stdCfg.pages || [];
+        for (const page of standardPages) {
+          const pageKey = `${std}-${page.code}`;
+          initialSections[pageKey] = {
+            code: pageKey,
+            standardCode: std,
+            pageCode: page.code,
+            score: undefined,
+            evidences: [],
+            remarks: '',
+            doText: '',
+            actText: '',
+            lainLainText: ''
+          };
+        }
+      }
+
+      // Populate localSections from existingVisit.visit_pages (new structure)
+      if (existingVisit.visit_pages) {
+        for (const pageData of existingVisit.visit_pages) {
+          const pageKey = `${pageData.standard_code}-${pageData.page_code}`;
+          if (initialSections[pageKey] && pageData.data) {
+            initialSections[pageKey] = {
+              ...initialSections[pageKey],
+              score: pageData.data.score ?? undefined,
+              evidences: pageData.data.evidences || [],
+              remarks: pageData.data.remarks || '',
+              doText: pageData.data.doText || '',
+              actText: pageData.data.actText || '',
+              lainLainText: pageData.data.lainLainText || ''
+            };
+          }
+        }
+      }
+
+      // Also populate from visit_sections for backward compatibility
+      if (existingVisit.visit_sections) {
+        for (const section of existingVisit.visit_sections) {
+          const stdCode = section.section_code;
+          const standardPages = standardsConfig[stdCode]?.pages || [];
+          
+          for (const page of standardPages) {
+            const pageKey = `${stdCode}-${page.code}`;
+            if (initialSections[pageKey]) {
+              initialSections[pageKey] = {
+                ...initialSections[pageKey],
+                score: section.score ?? undefined,
+                evidences: section.evidences || [],
+                remarks: section.remarks || ''
+              };
+            }
+          }
+        }
+      }
+
+      setLocalSections(initialSections);
+
+      // Set currentVisitId if it's an existing visit
+      setCurrentVisitId(existingVisit.id);
+      setIsDraftCreated(existingVisit.status === 'draft');
+    }
+  }, [isEditing, existingVisit, existingImages]);
+
+  // Calculate completion progress based on standards, not pages
+  const completionProgress = useMemo(() => {
+    const standards = ['1', '2', '3.1', '3.2', '3.3'];
+    let completedStandards = 0;
+    
+    for (const std of standards) {
+      // Check if any page in this standard has content
+      const hasContent = Object.values(localSections).some(section => {
+        if (section.standardCode !== std) return false;
+        
+        const hasScore = typeof section.score === 'number';
+        const hasRemarks = section.remarks && section.remarks.trim().length > 0;
+        const hasDoText = section.doText && section.doText.trim().length > 0;
+        const hasActText = section.actText && section.actText.trim().length > 0;
+        const hasEvidences = section.evidences && section.evidences.some(Boolean);
+        
+        return hasScore || hasRemarks || hasDoText || hasActText || hasEvidences;
+      });
+      
+      if (hasContent) completedStandards++;
+    }
+    
+    return {
+      completed: completedStandards,
+      total: standards.length,
+      percentage: Math.round((completedStandards / standards.length) * 100)
+    };
   }, [localSections]);
 
   // Function to get individual standard status
   const getStandardStatus = (standardCode: string) => {
-    const section = localSections[standardCode];
-    if (!section) return 'Not Started';
+    // Find all sections that belong to this standard
+    const standardSections = Object.values(localSections).filter(section => 
+      section.standardCode === standardCode
+    );
     
-    const hasScore = typeof section.score === 'number';
-    const hasRemarks = section.remarks && section.remarks.trim().length > 0;
-    const hasDoText = section.doText && section.doText.trim().length > 0;
-    const hasActText = section.actText && section.actText.trim().length > 0;
-    const hasEvidences = section.evidences && section.evidences.some(Boolean);
+    if (standardSections.length === 0) return 'Not Started';
     
-    if (hasScore || hasRemarks || hasDoText || hasActText || hasEvidences) {
+    // Check if any section has content
+    const hasAnyContent = standardSections.some(section => {
+      const hasScore = typeof section.score === 'number';
+      const hasRemarks = section.remarks && section.remarks.trim().length > 0;
+      const hasDoText = section.doText && section.doText.trim().length > 0;
+      const hasActText = section.actText && section.actText.trim().length > 0;
+      const hasEvidences = section.evidences && section.evidences.some(Boolean);
+      
+      return hasScore || hasRemarks || hasDoText || hasActText || hasEvidences;
+    });
+    
+    if (hasAnyContent) {
       return 'In Progress';
     }
     
@@ -208,6 +390,7 @@ const VisitForm = () => {
       const { data: user } = await supabase.auth.getUser();
       const officerId = user.user?.id;
       if (!officerId || !schoolId) throw new Error("Select school first");
+      if (!officer || officer.trim().length === 0) throw new Error("Nama Pegawai is required");
       
       // Determine visit status based on completion
       const completedStandards = Object.values(localSections).filter(s => {
@@ -225,48 +408,114 @@ const VisitForm = () => {
       // Ensure a matching profile row exists for FK constraint and save officer name
       await supabase.from('profiles').upsert({ id: officerId, name: officer || null }, { onConflict: 'id' });
       
-      const { data: visit, error } = await supabase
-        .from("visits")
-        .insert({ 
-          school_id: schoolId, 
-          officer_id: officerId, 
-          visit_date: visitDate || undefined, 
-          status: visitStatus 
-        })
-        .select("id")
-        .single();
-      if (error) throw error;
-      const visitId = visit.id as string;
-      setCurrentVisitId(visitId);
+      let visitId = currentVisitId;
       
-      // Save section data
-      for (const s of Object.values(localSections)) {
-        await supabase.from('visit_sections').upsert({
-          visit_id: visitId,
-          section_code: s.code,
-          score: s.score ?? null,
-          evidences: s.evidences,
-          remarks: s.remarks ?? null,
-        }, { onConflict: 'visit_id,section_code' });
+      // If we have an existing visit, update it; otherwise create a new one
+      if (currentVisitId) {
+        // Update existing visit
+        const { error } = await supabase
+          .from("visits")
+          .update({ 
+            school_id: schoolId, 
+            officer_id: officerId, 
+            visit_date: visitDate || undefined, 
+            status: visitStatus,
+            officer_name: officer || null,
+            pgb: pgb || null,
+            sesi_bimbingan: sesiBimbingan || null
+          })
+          .eq("id", currentVisitId);
+        if (error) throw error;
+      } else {
+        // Create new visit only if we don't have one
+        const { data: visit, error } = await supabase
+          .from("visits")
+          .insert({ 
+            school_id: schoolId, 
+            officer_id: officerId, 
+            visit_date: visitDate || undefined, 
+            status: visitStatus,
+            officer_name: officer || null,
+            pgb: pgb || null,
+            sesi_bimbingan: sesiBimbingan || null
+          })
+          .select("id")
+          .single();
+        if (error) throw error;
+        visitId = visit.id as string;
+        setCurrentVisitId(visitId);
       }
       
-      // Store per-page data for all pages in each standard
-      for (const std of Object.keys(standardsConfig)) {
-        const standardPages = standardsConfig[std]?.pages || [];
-        for (const page of standardPages) {
-          const payload = { 
-            visit_id: visitId, 
-            standard_code: std as any, 
-            page_code: page.code, 
+      // Save section data - follow the correct database design:
+      // visit_sections stores standard-level summaries
+      // visit_pages stores page-level detailed data
+      
+      // First, save standard-level summaries to visit_sections
+      const standardSummaries = new Map<string, any>();
+      
+      // Aggregate data by standard
+      for (const s of Object.values(localSections)) {
+        const stdCode = s.standardCode;
+        if (!standardSummaries.has(stdCode)) {
+          standardSummaries.set(stdCode, {
+            visit_id: visitId,
+            section_code: stdCode,
+            score: null,
+            evidences: [],
+            remarks: ''
+          });
+        }
+        
+        const summary = standardSummaries.get(stdCode);
+        // Aggregate scores (take the highest score if multiple pages have scores)
+        if (s.score !== undefined && s.score !== null) {
+          if (summary.score === null || s.score > summary.score) {
+            summary.score = s.score;
+          }
+        }
+        // Aggregate evidences (combine all evidences from all pages)
+        if (s.evidences && s.evidences.some(Boolean)) {
+          summary.evidences = [...summary.evidences, ...s.evidences];
+        }
+        // Aggregate remarks (combine all remarks)
+        if (s.remarks && s.remarks.trim()) {
+          if (summary.remarks) {
+            summary.remarks += '; ' + s.remarks;
+          } else {
+            summary.remarks = s.remarks;
+          }
+        }
+      }
+      
+      // Save standard summaries to visit_sections
+      for (const summary of standardSummaries.values()) {
+        try {
+          await supabase.from('visit_sections').upsert(summary, { onConflict: 'visit_id,section_code' });
+        } catch (error) {
+          console.error('Error saving section data:', error);
+          // Continue with other sections even if one fails
+        }
+      }
+      
+      // Save detailed page data to visit_pages
+      for (const s of Object.values(localSections)) {
+        try {
+          await supabase.from('visit_pages').upsert({
+            visit_id: visitId,
+            standard_code: s.standardCode as '1' | '2' | '3.1' | '3.2' | '3.3',
+            page_code: s.pageCode,
             data: {
-              score: localSections[std]?.score ?? null,
-              evidences: localSections[std]?.evidences ?? [],
-              remarks: localSections[std]?.remarks ?? '',
-              doText: localSections[std]?.doText ?? '',
-              actText: localSections[std]?.actText ?? '',
-            } 
-          } as any;
-          await supabase.from('visit_pages').upsert(payload, { onConflict: 'visit_id,standard_code,page_code' });
+              score: s.score ?? null,
+              evidences: s.evidences ?? [],
+              remarks: s.remarks ?? '',
+              doText: s.doText ?? '',
+              actText: s.actText ?? '',
+              lainLainText: s.lainLainText ?? ''
+            }
+          }, { onConflict: 'visit_id,standard_code,page_code' });
+        } catch (error) {
+          console.error('Error saving page data:', error);
+          // Continue with other pages even if one fails
         }
       }
       
@@ -298,6 +547,71 @@ const VisitForm = () => {
       const schoolName = (schools ?? []).find(s => s.id === schoolId)?.name ?? '';
       const { generateBorangPdf } = await import('@/pdf/generator');
       const sections = Object.values(localSections);
+      
+      // Save current progress before generating PDF (but don't create new visit)
+      if (currentVisitId) {
+        // Update existing visit data using the correct approach
+        // Aggregate data by standard for visit_sections
+        const standardSummaries = new Map<string, any>();
+        
+        for (const s of Object.values(localSections)) {
+          const stdCode = s.standardCode;
+          if (!standardSummaries.has(stdCode)) {
+            standardSummaries.set(stdCode, {
+              visit_id: currentVisitId,
+              section_code: stdCode,
+              score: null,
+              evidences: [],
+              remarks: ''
+            });
+          }
+          
+          const summary = standardSummaries.get(stdCode);
+          if (s.score !== undefined && s.score !== null) {
+            if (summary.score === null || s.score > summary.score) {
+              summary.score = s.score;
+            }
+          }
+          if (s.evidences && s.evidences.some(Boolean)) {
+            summary.evidences = [...summary.evidences, ...s.evidences];
+          }
+          if (s.remarks && s.remarks.trim()) {
+            if (summary.remarks) {
+              summary.remarks += '; ' + s.remarks;
+            } else {
+              summary.remarks = s.remarks;
+            }
+          }
+        }
+        
+        // Save standard summaries to visit_sections
+        for (const summary of standardSummaries.values()) {
+          try {
+            await supabase.from('visit_sections').upsert(summary, { onConflict: 'visit_id,section_code' });
+          } catch (error) {
+            console.error('Error saving section data:', error);
+            // Continue with other sections even if one fails
+          }
+        }
+        
+        // Save detailed page data to visit_pages
+        for (const s of Object.values(localSections)) {
+          await supabase.from('visit_pages').upsert({
+            visit_id: currentVisitId,
+            standard_code: s.standardCode as '1' | '2' | '3.1' | '3.2' | '3.3',
+            page_code: s.pageCode,
+            data: {
+              score: s.score ?? null,
+              evidences: s.evidences ?? [],
+              remarks: s.remarks ?? '',
+              doText: s.doText ?? '',
+              actText: s.actText ?? '',
+              lainLainText: s.lainLainText ?? ''
+            }
+          }, { onConflict: 'visit_id,standard_code,page_code' });
+        }
+      }
+      
       const blob = await generateBorangPdf({ 
         schoolName, 
         visitDate, 
@@ -306,22 +620,65 @@ const VisitForm = () => {
       } as any);
       const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'borang.pdf'; a.click(); URL.revokeObjectURL(url);
     } catch (e: any) {
-      toast({ title: 'PDF failed', description: e?.message ?? 'Unexpected error', variant: 'destructive' });
+      toast({ title: 'PDF failed', description: e?.message ?? 'Unexpected error', variant: "destructive" });
     }
   };
 
   // Build a simple report PDF with the current form state (screen-like summary)
   const handleDownloadReport = async () => {
     try {
+      // Show loading indicator
+      toast({ title: "Generating PDF...", description: "Please wait while we prepare your report." });
+      
       const schoolName = (schools ?? []).find(s => s.id === schoolId)?.name ?? '';
       const { generateVisitReportPdf, buildReportSectionsFromState } = await import('@/pdf/report');
-      // build screen-like sections from current state
-      const sections = buildReportSectionsFromState(localSections, pageIndex);
-      const anyContent = sections.some(s => (s.doText && s.doText.trim()) || (s.actText && s.actText.trim()) || s.checklistChecked.some(Boolean) || s.evidenceChecked.some(Boolean) || typeof s.score === 'number');
-      if (!anyContent) {
+      
+      // Persist current page-level data so History can reproduce the same PDF
+      if (currentVisitId) {
+        for (const s of Object.values(localSections)) {
+          await supabase.from('visit_pages').upsert({
+            visit_id: currentVisitId,
+            standard_code: s.standardCode as '1' | '2' | '3.1' | '3.2' | '3.3',
+            page_code: s.pageCode,
+            data: {
+              score: s.score ?? null,
+              evidences: s.evidences ?? [],
+              remarks: s.remarks ?? '',
+              doText: s.doText ?? '',
+              actText: s.actText ?? '',
+              lainLainText: s.lainLainText ?? ''
+            }
+          }, { onConflict: 'visit_id,standard_code,page_code' });
+        }
+      }
+
+      // Check if there's any content in the current form state
+      const hasAnyContent = Object.values(localSections).some(section => {
+        return (
+          (section.doText && section.doText.trim().length > 0) ||
+          (section.actText && section.actText.trim().length > 0) ||
+          (section.remarks && section.remarks.trim().length > 0) ||
+          (section.score !== undefined && section.score !== null) ||
+          (section.evidences && section.evidences.length > 0 && section.evidences.some(Boolean))
+        );
+      });
+      
+      if (!hasAnyContent) {
         toast({ title: 'Nothing to export', description: 'Fill any section to generate a report.' });
         return;
       }
+      
+      // build screen-like sections from current state
+      const sections = buildReportSectionsFromState(localSections, pageIndex);
+      
+      // Ensure every image has a public_url (compute if missing)
+      const imagesForReport = (visitImages || []).map((img: any) => {
+        if (img.public_url) return img;
+        const url = supabase.storage.from('visit-images').getPublicUrl(img.filename).data.publicUrl;
+        return { ...img, public_url: url };
+      });
+
+      // Generate PDF directly without saving to database first
       const blob = await generateVisitReportPdf({ 
         schoolName, 
         visitDate, 
@@ -329,11 +686,25 @@ const VisitForm = () => {
         pgb, 
         sesiBimbingan, 
         sections,
-        images: visitImages
+        images: imagesForReport
       } as any);
-      const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'visit-report.pdf'; a.click(); URL.revokeObjectURL(url);
+      
+      const url = URL.createObjectURL(blob); 
+      const a = document.createElement('a'); 
+      a.href = url; 
+      a.download = 'visit-report.pdf'; 
+      a.click(); 
+      URL.revokeObjectURL(url);
+      
+      // Beautiful success toast
+      toast({ 
+        title: "✅ Download Successful!", 
+        description: "Visit report has been downloaded successfully.",
+        duration: 3000,
+        className: "bg-green-50 border-green-200 text-green-800"
+      });
     } catch (e: any) {
-      toast({ title: 'Report failed', description: e?.message ?? 'Unexpected error', variant: 'destructive' });
+      toast({ title: 'Report failed', description: e?.message ?? 'Unexpected error', variant: "destructive" });
     }
   };
 
@@ -351,12 +722,15 @@ const VisitForm = () => {
 
   const executeAutoCloneWithinStandard = async () => {
     const stdCode = autoCloneStandard;
-    const currentPage = currentPageCode(stdCode);
-    if (!currentPage) return;
+    if (!stdCode) return;
 
-    // Get current page data
-    const currentData = localSections[stdCode];
-    if (!currentData) return;
+    // Find the current page data for this standard
+    // We need to find a section that belongs to this standard to get the current data
+    const currentPageData = Object.values(localSections).find(section => 
+      section.standardCode === stdCode
+    );
+    
+    if (!currentPageData) return;
 
     // Clone to all other pages in this standard
     const standardPages = standardsConfig[stdCode]?.pages || [];
@@ -368,44 +742,58 @@ const VisitForm = () => {
       const pageKey = `${stdCode}-${page.code}`;
       if (!updatedAutoFilled[pageKey]) updatedAutoFilled[pageKey] = new Set();
 
+      // Create a new section entry for each page if it doesn't exist
+      if (!updatedSections[pageKey]) {
+        updatedSections[pageKey] = {
+          code: pageKey,
+          standardCode: stdCode,
+          pageCode: page.code,
+          evidences: [],
+          remarks: '',
+          score: undefined,
+          doText: '',
+          actText: ''
+        };
+      }
+
       // Clone evidences
-      if (currentData.evidences) {
-        updatedSections[stdCode] = {
-          ...updatedSections[stdCode],
-          evidences: [...currentData.evidences],
+      if (currentPageData.evidences) {
+        updatedSections[pageKey] = {
+          ...updatedSections[pageKey],
+          evidences: [...currentPageData.evidences],
         };
         updatedAutoFilled[pageKey].add('evidences');
       }
 
       // Clone other fields
-      if (currentData.doText) {
-        updatedSections[stdCode] = {
-          ...updatedSections[stdCode],
-          doText: currentData.doText,
+      if (currentPageData.doText) {
+        updatedSections[pageKey] = {
+          ...updatedSections[pageKey],
+          doText: currentPageData.doText,
         };
         updatedAutoFilled[pageKey].add('doText');
       }
 
-      if (currentData.actText) {
-        updatedSections[stdCode] = {
-          ...updatedSections[stdCode],
-          actText: currentData.actText,
+      if (currentPageData.actText) {
+        updatedSections[pageKey] = {
+          ...updatedSections[pageKey],
+          actText: currentPageData.actText,
         };
         updatedAutoFilled[pageKey].add('actText');
       }
 
-      if (currentData.remarks) {
-        updatedSections[stdCode] = {
-          ...updatedSections[stdCode],
-          remarks: currentData.remarks,
+      if (currentPageData.remarks) {
+        updatedSections[pageKey] = {
+          ...updatedSections[pageKey],
+          remarks: currentPageData.remarks,
         };
         updatedAutoFilled[pageKey].add('remarks');
       }
 
-      if (currentData.score !== undefined) {
-        updatedSections[stdCode] = {
-          ...updatedSections[stdCode],
-          score: currentData.score,
+      if (currentPageData.score !== undefined) {
+        updatedSections[pageKey] = {
+          ...updatedSections[pageKey],
+          score: currentPageData.score,
         };
         updatedAutoFilled[pageKey].add('score');
       }
@@ -413,7 +801,11 @@ const VisitForm = () => {
 
     setLocalSections(updatedSections);
     setAutoFilledFields(updatedAutoFilled);
-    toast({ title: "Auto-clone completed", description: `Standard ${stdCode} has been auto-filled` });
+    toast({ 
+      title: "Auto-fill completed", 
+      description: `Standard ${stdCode} has been auto-filled with current data. Check for "Auto-Filled" badges on other pages.`,
+      duration: 5000
+    });
   };
 
   const executeAutoCloneFromLastVisit = async () => {
@@ -447,52 +839,63 @@ const VisitForm = () => {
       const updatedSections = { ...localSections };
       const updatedAutoFilled = { ...autoFilledFields };
 
-      // Clone visit sections
+      // Clone visit sections (standard-level data)
       if (lastVisit.visit_sections) {
         for (const section of lastVisit.visit_sections) {
           const stdCode = section.section_code;
-          if (updatedSections[stdCode]) {
-            updatedSections[stdCode] = {
-              ...updatedSections[stdCode],
-              score: section.score,
-              evidences: section.evidences || [],
-              remarks: section.remarks,
-            };
+          // Find all pages in this standard and update them
+          const standardPages = standardsConfig[stdCode]?.pages || [];
+          for (const page of standardPages) {
+            const pageKey = `${stdCode}-${page.code}`;
+            if (updatedSections[pageKey]) {
+              updatedSections[pageKey] = {
+                ...updatedSections[pageKey],
+                score: section.score,
+                evidences: section.evidences || [],
+                remarks: section.remarks,
+              };
 
-            const pageKey = `${stdCode}-general`;
-            if (!updatedAutoFilled[pageKey]) updatedAutoFilled[pageKey] = new Set();
-            updatedAutoFilled[pageKey].add('score');
-            updatedAutoFilled[pageKey].add('evidences');
-            updatedAutoFilled[pageKey].add('remarks');
+              if (!updatedAutoFilled[pageKey]) updatedAutoFilled[pageKey] = new Set();
+              updatedAutoFilled[pageKey].add('score');
+              updatedAutoFilled[pageKey].add('evidences');
+              updatedAutoFilled[pageKey].add('remarks');
+            }
           }
         }
       }
 
-      // Clone visit pages data
+      // Clone visit pages data (page-level data)
       if (lastVisit.visit_pages) {
+        
         for (const page of lastVisit.visit_pages) {
           const stdCode = page.standard_code;
           const pageCode = page.page_code;
           const pageData = page.data || {};
+          const pageKey = `${stdCode}-${pageCode}`;
 
-          if (updatedSections[stdCode]) {
-            updatedSections[stdCode] = {
-              ...updatedSections[stdCode],
+          if (updatedSections[pageKey]) {
+            updatedSections[pageKey] = {
+              ...updatedSections[pageKey],
               doText: pageData.doText || '',
               actText: pageData.actText || '',
+              lainLainText: pageData.lainLainText || '',
             };
 
-            const pageKey = `${stdCode}-${pageCode}`;
             if (!updatedAutoFilled[pageKey]) updatedAutoFilled[pageKey] = new Set();
-            updatedAutoFilled[pageKey].add('doText');
-            updatedAutoFilled[pageKey].add('actText');
+            if (pageData.doText) updatedAutoFilled[pageKey].add('doText');
+            if (pageData.actText) updatedAutoFilled[pageKey].add('actText');
+            if (pageData.lainLainText) updatedAutoFilled[pageKey].add('lainLainText');
           }
         }
       }
 
       setLocalSections(updatedSections);
       setAutoFilledFields(updatedAutoFilled);
-      toast({ title: "Data copied", description: "Previous visit data has been copied to this form" });
+      toast({ 
+        title: "Data copied successfully", 
+        description: "Previous visit data has been copied to this form. Check for 'Auto-Filled' badges on sections.",
+        duration: 5000
+      });
 
     } catch (error: any) {
       console.error('Error copying from last visit:', error);
@@ -555,14 +958,21 @@ const VisitForm = () => {
                 </div>
                 
                 <div className="space-y-2">
-                  <Label htmlFor="officer" className="text-sm font-medium text-foreground">Nama Pegawai</Label>
+                  <Label htmlFor="officer" className="text-sm font-medium text-foreground">
+                    Nama Pegawai <span className="text-red-500">*</span>
+                  </Label>
                   <Input
                     id="officer"
                     placeholder="Nama pegawai..."
                     value={officer}
                     onChange={(e) => setOfficer(e.target.value)}
-                    className="h-12 bg-background/50 border-border/50 focus:border-primary"
+                    className={`h-12 bg-background/50 border-border/50 focus:border-primary ${
+                      !officer || officer.trim().length === 0 ? 'border-red-300' : ''
+                    }`}
                   />
+                  {(!officer || officer.trim().length === 0) && (
+                    <p className="text-xs text-red-500">Nama Pegawai is required</p>
+                  )}
                 </div>
               </div>
               
@@ -593,9 +1003,9 @@ const VisitForm = () => {
               <div className="pt-4">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm font-medium text-foreground">Completion Progress</span>
-                  <span className="text-sm text-muted-foreground">{Math.round((progress ?? 0)/20)}/5 Standards</span>
+                  <span className="text-sm text-muted-foreground">{completionProgress.completed}/{completionProgress.total} Standards</span>
                 </div>
-                <Progress value={progress} className="h-2" />
+                <Progress value={completionProgress.percentage} className="h-2" />
               </div>
 
               {/* Auto-clone from last visit button */}
@@ -603,7 +1013,14 @@ const VisitForm = () => {
                 <div className="pt-4">
                   <Button
                     variant="outline"
-                    onClick={handleAutoCloneFromLastVisit}
+                    onClick={() => {
+                      const confirmed = window.confirm(
+                        "Are you sure you want to copy data from the last visit to this school? This will overwrite current form data."
+                      );
+                      if (confirmed) {
+                        handleAutoCloneFromLastVisit();
+                      }
+                    }}
                     className="w-full"
                   >
                     <History className="w-4 h-4 mr-2" />
@@ -620,6 +1037,33 @@ const VisitForm = () => {
                 </div>
                 <ImageUpload
                   visitId={currentVisitId}
+                  ensureVisitId={async () => {
+                    // Create a draft visit on-demand so images can be uploaded first
+                    const { data: user } = await supabase.auth.getUser();
+                    const officerId = user.user?.id;
+                    if (!officerId || !schoolId) {
+                      alert('Please select a school and fill officer first.');
+                      return '';
+                    }
+                    // If already created during another upload, reuse
+                    if (currentVisitId) return currentVisitId;
+                    const { data: visit, error } = await supabase
+                      .from('visits')
+                      .insert({
+                        school_id: schoolId,
+                        officer_id: officerId,
+                        visit_date: visitDate || undefined,
+                        status: 'draft',
+                        officer_name: officer || null,
+                        pgb: pgb || null,
+                        sesi_bimbingan: sesiBimbingan || null
+                      })
+                      .select('id')
+                      .single();
+                    if (error) { alert(error.message); return ''; }
+                    setCurrentVisitId(visit.id as string);
+                    return visit.id as string;
+                  }}
                   existingImages={visitImages}
                   onImageUploaded={(imageData) => {
                     setVisitImages(prev => [...prev, imageData]);
@@ -766,8 +1210,8 @@ const VisitForm = () => {
                             <h4 className="font-medium text-foreground text-lg">DO</h4>
                             {(() => {
                               const code = standard.code.split(' ')[1] as any;
-                              const page = currentPageCode(code);
-                              const pageKey = `${code}-${page}`;
+                              const pageCode = currentPageCode(code);
+                              const pageKey = `${code}-${pageCode}`;
                               const isAutoFilled = autoFilledFields[pageKey]?.has('doText');
                               return isAutoFilled ? <AutoFilledBadge /> : null;
                             })()}
@@ -779,14 +1223,20 @@ const VisitForm = () => {
                                 placeholder="Enter implementation details..."
                                 value={(() => {
                                   const code = standard.code.split(' ')[1] as any;
-                                  const page = currentPageSchema(code);
-                                  return localSections[code]?.doText || page?.do?.text || '';
+                                  const pageCode = currentPageCode(code);
+                                  const pageKey = `${code}-${pageCode}`;
+                                  return localSections[pageKey]?.doText || '';
                                 })()}
                                 onChange={(e) => {
                                   const code = standard.code.split(' ')[1] as any;
-                                  setLocalSections((prev) => ({
+                                  const pageCode = currentPageCode(code);
+                                  const pageKey = `${code}-${pageCode}`;
+                                  setLocalSections(prev => ({
                                     ...prev,
-                                    [code]: { ...prev[code], doText: e.target.value },
+                                    [pageKey]: {
+                                      ...prev[pageKey],
+                                      doText: e.target.value
+                                    }
                                   }));
                                 }}
                                 className="min-h-20 bg-background/50 border-border/50 focus:border-primary resize-none"
@@ -806,13 +1256,15 @@ const VisitForm = () => {
                                         size="sm" 
                                         onClick={() => {
                                           const code = standard.code.split(' ')[1] as any;
-                                          const currentText = localSections[code]?.doText || '';
+                                          const pageCode = currentPageCode(code);
+                                          const pageKey = `${code}-${pageCode}`;
+                                          const currentText = localSections[pageKey]?.doText || '';
                                           const separator = currentText ? '\n' : '';
-                                          setLocalSections((prev) => ({
+                                          setLocalSections(prev => ({
                                             ...prev,
-                                            [code]: { 
-                                              ...prev[code], 
-                                              doText: currentText + separator + suggestion 
+                                            [pageKey]: {
+                                              ...prev[pageKey],
+                                              doText: currentText + separator + suggestion
                                             }
                                           }));
                                         }}
@@ -864,7 +1316,9 @@ const VisitForm = () => {
                                   const code = standard.code.split(' ')[1] as any;
                                   const page = currentPageSchema(code);
                                   const checkboxes = page?.check?.checkboxes || [];
-                                  const evidences = localSections[code]?.evidences || [];
+                                  const pageCode = currentPageCode(code);
+                                  const pageKey = `${code}-${pageCode}`;
+                                  const evidences = localSections[pageKey]?.evidences || Array(checkboxes.length).fill(false);
                                   return checkboxes.length > 0 ? (
                                     <div className="space-y-2">
                                       {checkboxes.map((option, idx) => (
@@ -874,10 +1328,17 @@ const VisitForm = () => {
                                             className="rounded border-border"
                                             checked={evidences[idx] || false}
                                             onChange={(e) => {
-                                              setLocalSections((prev) => {
-                                                const next = { ...prev };
-                                                next[code].evidences[idx] = e.target.checked;
-                                                return next;
+                                              setLocalSections(prev => {
+                                                const currentSection = prev[pageKey];
+                                                const newEvidences = [...(currentSection?.evidences || Array(checkboxes.length).fill(false))];
+                                                newEvidences[idx] = e.target.checked;
+                                                return {
+                                                  ...prev,
+                                                  [pageKey]: {
+                                                    ...currentSection,
+                                                    evidences: newEvidences
+                                                  }
+                                                };
                                               });
                                             }}
                                           />
@@ -900,8 +1361,8 @@ const VisitForm = () => {
                             <h4 className="font-medium text-foreground text-lg">ACT</h4>
                             {(() => {
                               const code = standard.code.split(' ')[1] as any;
-                              const page = currentPageCode(code);
-                              const pageKey = `${code}-${page}`;
+                              const pageCode = currentPageCode(code);
+                              const pageKey = `${code}-${pageCode}`;
                               const isAutoFilled = autoFilledFields[pageKey]?.has('actText');
                               return isAutoFilled ? <AutoFilledBadge /> : null;
                             })()}
@@ -913,14 +1374,20 @@ const VisitForm = () => {
                                 placeholder="Enter follow-up actions..."
                                 value={(() => {
                                   const code = standard.code.split(' ')[1] as any;
-                                  const page = currentPageSchema(code);
-                                  return localSections[code]?.actText || page?.act?.text || '';
+                                  const pageCode = currentPageCode(code);
+                                  const pageKey = `${code}-${pageCode}`;
+                                  return localSections[pageKey]?.actText || '';
                                 })()}
                                 onChange={(e) => {
                                   const code = standard.code.split(' ')[1] as any;
-                                  setLocalSections((prev) => ({
+                                  const pageCode = currentPageCode(code);
+                                  const pageKey = `${code}-${pageCode}`;
+                                  setLocalSections(prev => ({
                                     ...prev,
-                                    [code]: { ...prev[code], actText: e.target.value },
+                                    [pageKey]: {
+                                      ...prev[pageKey],
+                                      actText: e.target.value
+                                    }
                                   }));
                                 }}
                                 className="min-h-20 bg-background/50 border-border/50 focus:border-primary resize-none"
@@ -940,13 +1407,15 @@ const VisitForm = () => {
                                         size="sm" 
                                         onClick={() => {
                                           const code = standard.code.split(' ')[1] as any;
-                                          const currentText = localSections[code]?.actText || '';
+                                          const pageCode = currentPageCode(code);
+                                          const pageKey = `${code}-${pageCode}`;
+                                          const currentText = localSections[pageKey]?.actText || '';
                                           const separator = currentText ? '\n' : '';
-                                          setLocalSections((prev) => ({
+                                          setLocalSections(prev => ({
                                             ...prev,
-                                            [code]: { 
-                                              ...prev[code], 
-                                              actText: currentText + separator + suggestion 
+                                            [pageKey]: {
+                                              ...prev[pageKey],
+                                              actText: currentText + separator + suggestion
                                             }
                                           }));
                                         }}
@@ -968,8 +1437,8 @@ const VisitForm = () => {
                             <h4 className="font-medium text-foreground text-lg">Evidence</h4>
                             {(() => {
                               const code = standard.code.split(' ')[1] as any;
-                              const page = currentPageCode(code);
-                              const pageKey = `${code}-${page}`;
+                              const pageCode = currentPageCode(code);
+                              const pageKey = `${code}-${pageCode}`;
                               const isAutoFilled = autoFilledFields[pageKey]?.has('evidences');
                               return isAutoFilled ? <AutoFilledBadge /> : null;
                             })()}
@@ -979,7 +1448,12 @@ const VisitForm = () => {
                               {(() => {
                                 const code = standard.code.split(' ')[1] as any;
                                 const page = currentPageSchema(code);
-                                const evidences = localSections[code]?.evidences || [];
+                                const pageCode = currentPageCode(code);
+                                const pageKey = `${code}-${pageCode}`;
+                                
+                                // Use page-specific evidence storage
+                                const pageState = localSections[pageKey];
+                                const evidences = pageState?.evidences || Array(page?.evidenceLabels?.length || 0).fill(false);
                                 const labels = page?.evidenceLabels || evidences.map((_,i)=>`Evidence ${i+1}`);
                                 
                                 return labels.map((label, idx) => {
@@ -997,9 +1471,16 @@ const VisitForm = () => {
                                             checked={evidences[idx] || false}
                                             onChange={(e) => {
                                               setLocalSections((prev) => {
-                                                const next = { ...prev };
-                                                next[code].evidences[idx] = e.target.checked;
-                                                return next;
+                                                const currentSection = prev[pageKey];
+                                                const newEvidences = [...(currentSection?.evidences || Array(labels.length).fill(false))];
+                                                newEvidences[idx] = e.target.checked;
+                                                return {
+                                                  ...prev,
+                                                  [pageKey]: {
+                                                    ...currentSection,
+                                                    evidences: newEvidences
+                                                  }
+                                                };
                                               });
                                             }}
                                           />
@@ -1008,12 +1489,18 @@ const VisitForm = () => {
                                             placeholder="Enter details..."
                                             className="flex-1 h-8 text-xs bg-background/50 border-border/50"
                                             disabled={!evidences[idx]}
-                                            value={localSections[code]?.lainLainText || ''}
+                                            value={pageState?.lainLainText || ''}
                                             onChange={(e) => {
-                                              setLocalSections((prev) => ({
-                                                ...prev,
-                                                [code]: { ...prev[code], lainLainText: e.target.value },
-                                              }));
+                                              setLocalSections((prev) => {
+                                                const currentSection = prev[pageKey];
+                                                return {
+                                                  ...prev,
+                                                  [pageKey]: {
+                                                    ...currentSection,
+                                                    lainLainText: e.target.value
+                                                  }
+                                                };
+                                              });
                                             }}
                                           />
                                         </div>
@@ -1026,9 +1513,16 @@ const VisitForm = () => {
                                             checked={evidences[idx] || false}
                                             onChange={(e) => {
                                               setLocalSections((prev) => {
-                                                const next = { ...prev };
-                                                next[code].evidences[idx] = e.target.checked;
-                                                return next;
+                                                const currentSection = prev[pageKey];
+                                                const newEvidences = [...(currentSection?.evidences || Array(labels.length).fill(false))];
+                                                newEvidences[idx] = e.target.checked;
+                                                return {
+                                                  ...prev,
+                                                  [pageKey]: {
+                                                    ...currentSection,
+                                                    evidences: newEvidences
+                                                  }
+                                                };
                                               });
                                             }}
                                           />
@@ -1051,12 +1545,20 @@ const VisitForm = () => {
                           </div>
                           <div className="p-4 bg-blue-50/30 rounded-lg border border-blue-200/30">
                             <p className="text-sm text-muted-foreground mb-3">
-                              After filling in this assessment, you can auto-fill the rest of Standard {standard.code.split(' ')[1]} with the same data.
+                              After filling in this assessment, you can auto-fill the rest of Standard {standard.code.split(' ')[1]} with the same data. 
+                              <strong className="text-orange-600">This will overwrite existing data in other pages.</strong>
                             </p>
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={() => handleAutoCloneWithinStandard(standard.code.split(' ')[1])}
+                              onClick={() => {
+                                const confirmed = window.confirm(
+                                  `Are you sure you want to auto-fill all pages in Standard ${standard.code.split(' ')[1]} with the current data? This action cannot be undone.`
+                                );
+                                if (confirmed) {
+                                  handleAutoCloneWithinStandard(standard.code.split(' ')[1]);
+                                }
+                              }}
                               className="w-full"
                             >
                               <Copy className="w-4 h-4 mr-2" />
@@ -1102,23 +1604,44 @@ const VisitForm = () => {
           <Card className="gradient-card shadow-soft border-0">
             <CardContent className="py-8">
               <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-                <Button variant="outline" size="lg" className="px-8 py-6" onClick={() => saveMutation.mutate()} disabled={!schoolId || saveMutation.isPending}>
+                <Button variant="outline" size="lg" className="px-8 py-6 hover:bg-primary hover:text-primary-foreground transition-all duration-200" onClick={() => saveMutation.mutate()} disabled={!schoolId || !officer || officer.trim().length === 0 || saveMutation.isPending}>
                   <Save className="w-5 h-5 mr-3" />
                    {saveMutation.isPending ? 'Saving...' : 'Save Progress'}
                 </Button>
-                <Button size="lg" variant="secondary" className="px-8 py-6" onClick={handleDownloadReport}>
+                <Button size="lg" variant="secondary" className="px-8 py-6 hover:bg-primary hover:text-primary-foreground transition-all duration-200" onClick={handleDownloadReport}>
                   <Download className="w-5 h-5 mr-3" />
                   Download Report
                 </Button>
-                <Button size="lg" className="gradient-primary hover:shadow-glow transition-all duration-300 text-white border-0 px-8 py-6" onClick={handleGenerate}>
-                  <Download className="w-5 h-5 mr-3" />
-                  Generate Official PDF
+                <Button 
+                  size="lg" 
+                  variant="outline" 
+                  className="px-8 py-6 hover:bg-primary hover:text-primary-foreground transition-all duration-200" 
+                  onClick={() => {
+                    // Reset form and redirect to history
+                    setLocalSections({});
+                    setVisitImages([]);
+                    setCurrentVisitId(undefined);
+                    setIsDraftCreated(false);
+                    setAutoFilledFields({});
+                    setSchoolId('');
+                    setVisitDate('');
+                    setOfficer('');
+                    setPgb('');
+                    setSesiBimbingan('');
+                    setPageIndex({});
+                    toast({ title: "Form completed", description: "Redirecting to history page" });
+                    // Redirect to history page
+                    window.location.href = '/history';
+                  }}
+                >
+                  <Check className="w-5 h-5 mr-3" />
+                  Complete & View History
                 </Button>
               </div>
               
               {/* Additional Action Buttons */}
               <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mt-6 pt-6 border-t border-border/30">
-                <Button variant="outline" size="lg" className="px-6 py-4" onClick={() => {
+                <Button variant="outline" size="lg" className="px-6 py-4 hover:bg-primary hover:text-primary-foreground transition-all duration-200" onClick={() => {
                   // Reset form
                   setLocalSections({});
                   setVisitImages([]);
@@ -1136,11 +1659,11 @@ const VisitForm = () => {
                   <RotateCcw className="w-5 h-5 mr-3" />
                   Reset Form
                 </Button>
-                <Button size="lg" variant="outline" className="px-6 py-4" onClick={() => {
+                <Button size="lg" variant="outline" className="px-6 py-4 hover:bg-primary hover:text-primary-foreground transition-all duration-200" onClick={() => {
                   // Navigate to new visit
                   window.location.href = '/visits/new';
                 }}>
-                  <Plus className="w-5 h-5 mr-3" />
+                  <Plus className="w-5 h-4 mr-3" />
                   New Visit
                 </Button>
               </div>

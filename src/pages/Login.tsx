@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Shield, Mail, Lock, ArrowRight } from "lucide-react";
+import { Shield, Mail, Lock, ArrowRight, AlertCircle } from "lucide-react";
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -17,20 +17,94 @@ const Login = () => {
   const [loading, setLoading] = useState(false);
 
   const handleLogin = async () => {
+    if (!email.trim() || !password.trim()) {
+      toast({ 
+        title: "Missing information", 
+        description: "Please enter both email and password.", 
+        variant: "destructive" 
+      });
+      return;
+    }
+
     try {
       setLoading(true);
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) throw error;
-      toast({ title: "Signed in", description: "Welcome back." });
-      navigate("/");
+      
+      // First check if user registration is approved
+      const { data: registrationData } = await supabase
+        .from('user_registrations')
+        .select('status, admin_notes')
+        .eq('email', email.trim().toLowerCase())
+        .single();
+
+      if (registrationData) {
+        if (registrationData.status === 'pending') {
+          toast({ 
+            title: "Account Pending Approval", 
+            description: "Your registration is still being reviewed by an administrator. You'll receive an email once approved.", 
+            variant: "destructive" 
+          });
+          setLoading(false);
+          return;
+        }
+        
+        if (registrationData.status === 'rejected') {
+          toast({ 
+            title: "Account Rejected", 
+            description: `Your registration was not approved. ${registrationData.admin_notes ? `Reason: ${registrationData.admin_notes}` : 'Please contact administrator for more information.'}`, 
+            variant: "destructive" 
+          });
+          setLoading(false);
+          return;
+        }
+      }
+
+      // Attempt to sign in
+      const { data, error } = await supabase.auth.signInWithPassword({ 
+        email: email.trim().toLowerCase(), 
+        password 
+      });
+      
+      if (error) {
+        if (error.message.includes('Invalid login credentials')) {
+          toast({ 
+            title: "Login failed", 
+            description: "Invalid email or password. Please check your credentials and try again.", 
+            variant: "destructive" 
+          });
+        } else if (error.message.includes('Email not confirmed')) {
+          toast({ 
+            title: "Email not confirmed", 
+            description: "Please check your email and click the confirmation link before signing in.", 
+            variant: "destructive" 
+          });
+        } else {
+          toast({ 
+            title: "Login failed", 
+            description: error.message, 
+            variant: "destructive" 
+          });
+        }
+        return;
+      }
+
+      if (data.user) {
+        toast({ 
+          title: "Welcome back!", 
+          description: "Successfully signed in to your account." 
+        });
+        navigate("/");
+      }
     } catch (err: any) {
-      toast({ title: "Login failed", description: err?.message ?? "Unexpected error", variant: "destructive" });
+      console.error('Login error:', err);
+      toast({ 
+        title: "Login failed", 
+        description: "An unexpected error occurred. Please try again.", 
+        variant: "destructive" 
+      });
     } finally {
       setLoading(false);
     }
   };
-
-  // OAuth providers are not configured in this project. Keeping email/password only.
 
   return (
     <main className="min-h-screen bg-background">
@@ -64,10 +138,11 @@ const Login = () => {
                 <Input
                   id="email"
                   type="email"
-                  placeholder="officer@sip.edu.my"
+                  placeholder="your.email@gmail.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="h-12 bg-background/50 border-border/50 focus:border-primary transition-colors"
+                  onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
                 />
               </div>
               
@@ -83,25 +158,43 @@ const Login = () => {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="h-12 bg-background/50 border-border/50 focus:border-primary transition-colors"
+                  onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
                 />
               </div>
               
               <Button
                 onClick={handleLogin}
                 className="w-full h-12 gradient-primary hover:shadow-glow transition-all duration-300 text-white border-0 font-medium"
-                disabled={loading || !email || !password}
+                disabled={loading || !email.trim() || !password.trim()}
               >
-                {loading ? "Signing in..." : "Sign In"}
-                <ArrowRight className="w-4 h-4 ml-2" />
+                {loading ? (
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    Signing in...
+                  </div>
+                ) : (
+                  <>
+                    Sign In
+                    <ArrowRight className="w-4 h-4 ml-2" />
+                  </>
+                )}
               </Button>
 
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" />
+                  <div className="text-sm text-blue-800">
+                    <p className="font-medium mb-1">New to SIP+?</p>
+                    <p>Register for an account and wait for admin approval before signing in.</p>
+                  </div>
+                </div>
+              </div>
               
               <div className="text-center pt-4 space-y-2">
-                <p className="text-sm text-muted-foreground">Use your SIP+ account credentials</p>
                 <Link to="/signup" className="text-sm text-primary hover:underline inline-block">
-                  Don’t have an account? Sign up
+                  Don't have an account? Sign up
                 </Link>
-                <button className="block w-full text-sm text-muted-foreground hover:underline mt-1" onClick={() => navigate('/login') }>
+                <button className="block w-full text-sm text-muted-foreground hover:underline mt-1">
                   Forgot your password?
                 </button>
               </div>

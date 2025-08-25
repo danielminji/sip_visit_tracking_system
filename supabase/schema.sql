@@ -8,12 +8,15 @@ create table if not exists public.profiles (
   role text check (role in ('officer','admin')) default 'officer'
 );
 alter table public.profiles enable row level security;
-create policy if not exists "profiles are self-readable" on public.profiles
+drop policy if exists "profiles are self-readable" on public.profiles;
+create policy "profiles are self-readable" on public.profiles
   for select using (auth.uid() = id);
-create policy if not exists "profiles are self-writable" on public.profiles
+drop policy if exists "profiles are self-writable" on public.profiles;
+create policy "profiles are self-writable" on public.profiles
   for update using (auth.uid() = id);
 -- Allow officers to insert their own profile row on first sign-in
-create policy if not exists "profiles are self-insertable" on public.profiles
+drop policy if exists "profiles are self-insertable" on public.profiles;
+create policy "profiles are self-insertable" on public.profiles
   for insert with check (auth.uid() = id);
 
 -- schools
@@ -26,16 +29,30 @@ create table if not exists public.schools (
   contact text
 );
 -- Prevent duplicate schools when reseeding
-alter table public.schools
-  add constraint if not exists schools_name_district_category_key unique (name, district, category);
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'schools_name_district_category_key'
+      and conrelid = 'public.schools'::regclass
+  ) then
+    alter table public.schools
+      add constraint schools_name_district_category_key unique (name, district, category);
+  end if;
+end $$;
 alter table public.schools enable row level security;
-create policy if not exists "schools readable to authenticated" on public.schools
+drop policy if exists "schools readable to authenticated" on public.schools;
+create policy "schools readable to authenticated" on public.schools
   for select using (auth.role() = 'authenticated');
-create policy if not exists "schools insert by authenticated" on public.schools
+drop policy if exists "schools insert by authenticated" on public.schools;
+create policy "schools insert by authenticated" on public.schools
   for insert with check (auth.role() = 'authenticated');
-create policy if not exists "schools update by authenticated" on public.schools
+drop policy if exists "schools update by authenticated" on public.schools;
+create policy "schools update by authenticated" on public.schools
   for update using (auth.role() = 'authenticated');
-create policy if not exists "schools delete by authenticated" on public.schools
+drop policy if exists "schools delete by authenticated" on public.schools;
+create policy "schools delete by authenticated" on public.schools
   for delete using (auth.role() = 'authenticated');
 
 -- visits
@@ -45,14 +62,20 @@ create table if not exists public.visits (
   officer_id uuid not null references public.profiles(id) on delete restrict,
   visit_date date not null default (now()::date),
   status text default 'draft',
+  officer_name text,
+  pgb text,
+  sesi_bimbingan text,
   created_at timestamptz not null default now()
 );
 alter table public.visits enable row level security;
-create policy if not exists "officers read own visits" on public.visits
+drop policy if exists "officers read own visits" on public.visits;
+create policy "officers read own visits" on public.visits
   for select using (officer_id = auth.uid());
-create policy if not exists "officers insert own visits" on public.visits
+drop policy if exists "officers insert own visits" on public.visits;
+create policy "officers insert own visits" on public.visits
   for insert with check (officer_id = auth.uid());
-create policy if not exists "officers update own visits" on public.visits
+drop policy if exists "officers update own visits" on public.visits;
+create policy "officers update own visits" on public.visits
   for update using (officer_id = auth.uid());
 
 -- visit_sections
@@ -66,11 +89,14 @@ create table if not exists public.visit_sections (
   unique (visit_id, section_code)
 );
 alter table public.visit_sections enable row level security;
-create policy if not exists "read sections of own visits" on public.visit_sections
+drop policy if exists "read sections of own visits" on public.visit_sections;
+create policy "read sections of own visits" on public.visit_sections
   for select using (exists (select 1 from public.visits v where v.id = visit_id and v.officer_id = auth.uid()));
-create policy if not exists "write sections of own visits" on public.visit_sections
+drop policy if exists "write sections of own visits" on public.visit_sections;
+create policy "write sections of own visits" on public.visit_sections
   for insert with check (exists (select 1 from public.visits v where v.id = visit_id and v.officer_id = auth.uid()));
-create policy if not exists "update sections of own visits" on public.visit_sections
+drop policy if exists "update sections of own visits" on public.visit_sections;
+create policy "update sections of own visits" on public.visit_sections
   for update using (exists (select 1 from public.visits v where v.id = visit_id and v.officer_id = auth.uid()));
 
 -- visit_images (NEW TABLE for storing image metadata)
@@ -86,11 +112,14 @@ create table if not exists public.visit_images (
   uploaded_at timestamptz not null default now()
 );
 alter table public.visit_images enable row level security;
-create policy if not exists "read images of own visits" on public.visit_images
+drop policy if exists "read images of own visits" on public.visit_images;
+create policy "read images of own visits" on public.visit_images
   for select using (exists (select 1 from public.visits v where v.id = visit_id and v.officer_id = auth.uid()));
-create policy if not exists "insert images for own visits" on public.visit_images
+drop policy if exists "insert images for own visits" on public.visit_images;
+create policy "insert images for own visits" on public.visit_images
   for insert with check (exists (select 1 from public.visits v where v.id = visit_id and v.officer_id = auth.uid()));
-create policy if not exists "delete images of own visits" on public.visit_images
+drop policy if exists "delete images of own visits" on public.visit_images;
+create policy "delete images of own visits" on public.visit_images
   for delete using (exists (select 1 from public.visits v where v.id = visit_id and v.officer_id = auth.uid()));
 
 -- visit_pages
@@ -99,15 +128,18 @@ create table if not exists public.visit_pages (
   visit_id uuid not null references public.visits(id) on delete cascade,
   standard_code text not null check (standard_code in ('1','2','3.1','3.2','3.3')),
   page_code text not null,
-  data jsonb not null default '{}'::jsonb,
-  unique (visit_id, page_code)
+  data jsonb default '{}'::jsonb,
+  unique (visit_id, standard_code, page_code)
 );
 alter table public.visit_pages enable row level security;
-create policy if not exists "read pages of own visits" on public.visit_pages
+drop policy if exists "read pages of own visits" on public.visit_pages;
+create policy "read pages of own visits" on public.visit_pages
   for select using (exists (select 1 from public.visits v where v.id = visit_id and v.officer_id = auth.uid()));
-create policy if not exists "write pages of own visits" on public.visit_pages
+drop policy if exists "write pages of own visits" on public.visit_pages;
+create policy "write pages of own visits" on public.visit_pages
   for insert with check (exists (select 1 from public.visits v where v.id = visit_id and v.officer_id = auth.uid()));
-create policy if not exists "update pages of own visits" on public.visit_pages
+drop policy if exists "update pages of own visits" on public.visit_pages;
+create policy "update pages of own visits" on public.visit_pages
   for update using (exists (select 1 from public.visits v where v.id = visit_id and v.officer_id = auth.uid()));
 
 -- Seed: Raub district schools (SK & SMK)

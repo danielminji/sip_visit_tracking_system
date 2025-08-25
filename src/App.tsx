@@ -11,6 +11,7 @@ import VisitForm from "./pages/VisitForm";
 import History from "./pages/History";
 import NotFound from "./pages/NotFound";
 import Signup from "./pages/Signup";
+import AdminDashboard from "./pages/AdminDashboard";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -39,6 +40,35 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   return authed ? <>{children}</> : <Navigate to="/login" replace />;
 };
 
+const AdminRoute = ({ children }: { children: React.ReactNode }) => {
+  const [checking, setChecking] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    const checkAdmin = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setChecking(false);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('admin_users')
+        .select('*')
+        .eq('user_id', user.id)
+        .single();
+
+      setIsAdmin(!!data);
+      setChecking(false);
+    };
+
+    checkAdmin();
+  }, []);
+
+  if (checking) return null;
+  return isAdmin ? <>{children}</> : <Navigate to="/" replace />;
+};
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
@@ -52,7 +82,9 @@ const App = () => (
           <Route path="/signup" element={<Signup />} />
           <Route path="/schools" element={<ProtectedRoute><Schools /></ProtectedRoute>} />
           <Route path="/visits/new" element={<ProtectedRoute><VisitForm /></ProtectedRoute>} />
+          <Route path="/visits/edit/:id" element={<ProtectedRoute><VisitForm /></ProtectedRoute>} />
           <Route path="/history" element={<ProtectedRoute><History /></ProtectedRoute>} />
+          <Route path="/admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
@@ -60,6 +92,5 @@ const App = () => (
     </TooltipProvider>
   </QueryClientProvider>
 );
-
 
 export default App;

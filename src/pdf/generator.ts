@@ -72,14 +72,6 @@ async function embedImageFromUrl(url: string): Promise<PDFImage | null> {
 export async function generateBorangPdf(data: VisitExport): Promise<Blob> {
   const pdfs: PDFDocument[] = [];
   
-  // Group images by section code
-  const imagesBySection = (data.images || []).reduce((acc, img) => {
-    const sectionCode = img.section_code || 'general';
-    if (!acc[sectionCode]) acc[sectionCode] = [];
-    acc[sectionCode].push(img);
-    return acc;
-  }, {} as Record<string, typeof data.images>);
-
   // Create a PDF for each section that has data
   for (const s of data.sections) {
     // Skip sections without meaningful data
@@ -114,28 +106,70 @@ export async function generateBorangPdf(data: VisitExport): Promise<Blob> {
     if (coords?.remarks && s.remarks) {
       drawMultilineText(page, s.remarks, coords.remarks, font);
     }
+    
+    pdfs.push(doc);
+  }
 
-    // Add images for this section
-    const sectionImages = imagesBySection[s.code] || [];
-    if (sectionImages.length > 0) {
-      // Add images at the bottom of the page
-      let imageY = 100; // Start position for images
-      const imageWidth = 150;
-      const imageHeight = 100;
-      const imagesPerRow = 3;
-      
-      for (let i = 0; i < sectionImages.length; i++) {
-        const img = sectionImages[i];
-        if (img.public_url) {
-          try {
-            const pdfImage = await embedImageFromUrl(img.public_url);
-            if (pdfImage) {
-              const row = Math.floor(i / imagesPerRow);
-              const col = i % imagesPerRow;
-              const x = 50 + col * (imageWidth + 20);
-              const y = imageY - row * (imageHeight + 30);
+  // Add a separate page for images if there are any
+  if (data.images && data.images.length > 0) {
+    const imageDoc = await PDFDocument.create();
+    const imagePage = imageDoc.addPage([595.28, 841.89]); // A4 portrait
+    const font = await imageDoc.embedFont(StandardFonts.Helvetica);
+    const bold = await imageDoc.embedFont(StandardFonts.HelveticaBold);
+    
+    // Add title
+    imagePage.drawText('Visit Images', { 
+      x: 50, 
+      y: 800, 
+      size: 18, 
+      font: bold, 
+      color: rgb(0,0,0) 
+    });
+    
+    // Add images in a grid
+    let imageY = 750;
+    const imageWidth = 150;
+    const imageHeight = 100;
+    const imagesPerRow = 3;
+    
+    for (let i = 0; i < data.images.length; i++) {
+      const img = data.images[i];
+      if (img.public_url) {
+        try {
+          const pdfImage = await embedImageFromUrl(img.public_url);
+          if (pdfImage) {
+            const row = Math.floor(i / imagesPerRow);
+            const col = i % imagesPerRow;
+            const x = 50 + col * (imageWidth + 20);
+            const y = imageY - row * (imageHeight + 40);
+            
+            // Check if we need a new page
+            if (y < 100) {
+              const newPage = imageDoc.addPage([595.28, 841.89]);
+              imageY = 750;
+              const newRow = Math.floor(i / imagesPerRow);
+              const newCol = i % imagesPerRow;
+              const newX = 50 + newCol * (imageWidth + 20);
+              const newY = imageY - newRow * (imageHeight + 40);
               
-              page.drawImage(pdfImage, {
+              newPage.drawImage(pdfImage, {
+                x: newX,
+                y: newY,
+                width: imageWidth,
+                height: imageHeight,
+              });
+              
+              // Add image description below
+              const description = img.description || img.original_name;
+              newPage.drawText(description, {
+                x: newX + 5,
+                y: newY - 15,
+                size: 8,
+                font,
+                color: rgb(0.5, 0.5, 0.5),
+              });
+            } else {
+              imagePage.drawImage(pdfImage, {
                 x,
                 y,
                 width: imageWidth,
@@ -143,31 +177,30 @@ export async function generateBorangPdf(data: VisitExport): Promise<Blob> {
               });
               
               // Add image description below
-              if (img.description) {
-                page.drawText(img.description, {
-                  x: x + 5,
-                  y: y - 15,
-                  size: 8,
-                  font,
-                  color: rgb(0.5, 0.5, 0.5),
-                });
-              }
+              const description = img.description || img.original_name;
+              imagePage.drawText(description, {
+                x: x + 5,
+                y: y - 15,
+                size: 8,
+                font,
+                color: rgb(0.5, 0.5, 0.5),
+              });
             }
-          } catch (error) {
-            console.error('Failed to add image to PDF:', error);
           }
+        } catch (error) {
+          console.error('Failed to add image to PDF:', error);
         }
       }
     }
     
-    pdfs.push(doc);
+    pdfs.push(imageDoc);
   }
 
   // Merge to one document
   const outDoc = await PDFDocument.create();
   for (const part of pdfs) {
-    const [page] = await outDoc.copyPages(part, [0]);
-    outDoc.addPage(page);
+    const pages = await outDoc.copyPages(part, part.getPageIndices());
+    pages.forEach(page => outDoc.addPage(page));
   }
   const out = await outDoc.save();
   return new Blob([out], { type: 'application/pdf' });

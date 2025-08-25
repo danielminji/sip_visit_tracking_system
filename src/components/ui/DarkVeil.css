@@ -1,0 +1,27 @@
+.darkveil-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  display: block;
+  pointer-events: none;
+  z-index: -1;
+  opacity: 0.8;
+  mix-blend-mode: soft-light;
+}
+
+/* Mobile-specific adjustments */
+@media (max-width: 768px) {
+  .darkveil-canvas {
+    opacity: 0.6;
+  }
+}
+
+/* Touch device optimizations */
+@media (hover: none) and (pointer: coarse) {
+  .darkveil-canvas {
+    opacity: 0.5;
+  }
+}
+
+

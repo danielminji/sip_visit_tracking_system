@@ -1,29 +1,78 @@
 import { Link, useNavigate } from "react-router-dom";
-import { Building2, Clock, LogIn, LogOut, Plus } from "lucide-react";
+import { Building2, Clock, LogIn, LogOut, Plus, Menu, X, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 
 const Navbar = () => {
   const [authed, setAuthed] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
     const check = async () => {
       const { data } = await supabase.auth.getSession();
       setAuthed(!!data.session);
+      
+      if (data.session) {
+        // Check if user is admin
+        const { data: adminData } = await supabase
+          .from('admin_users')
+          .select('*')
+          .eq('user_id', data.session.user.id)
+          .single();
+        
+        setIsAdmin(!!adminData);
+      }
     };
     check();
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+    const { data: sub } = supabase.auth.onAuthStateChange(async (_e, session) => {
       setAuthed(!!session);
+      if (session) {
+        const { data: adminData } = await supabase
+          .from('admin_users')
+          .select('*')
+          .eq('user_id', session.user.id)
+          .single();
+        
+        setIsAdmin(!!adminData);
+      } else {
+        setIsAdmin(false);
+      }
     });
     return () => sub.subscription.unsubscribe();
   }, []);
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
-    navigate("/login");
+    try {
+      setIsLoggingOut(true);
+      const { error } = await supabase.auth.signOut();
+      
+      if (error) {
+        console.error('Logout error:', error);
+        toast.error('Failed to logout. Please try again.');
+        return;
+      }
+      
+      // Clear any local state
+      setAuthed(false);
+      setIsAdmin(false);
+      setMobileMenuOpen(false);
+      
+      // Navigate to login page
+      navigate("/login");
+      toast.success('Logged out successfully');
+    } catch (error) {
+      console.error('Logout error:', error);
+      toast.error('Failed to logout. Please try again.');
+    } finally {
+      setIsLoggingOut(false);
+    }
   };
+
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/80 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60">
       <nav className="container mx-auto px-4 py-4 flex items-center justify-between">
@@ -34,8 +83,9 @@ const Navbar = () => {
           <span className="hidden sm:inline hero-text">SIP+ Tracking</span>
         </Link>
         
-        <div className="flex items-center gap-6">
-          <div className="hidden md:flex items-center gap-4">
+        {/* Desktop Navigation */}
+        <div className="hidden md:flex items-center gap-6">
+          <div className="flex items-center gap-4">
             <Link to="/schools" className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors group">
               <Building2 className="w-4 h-4 group-hover:text-primary transition-colors" />
               Schools
@@ -44,6 +94,12 @@ const Navbar = () => {
               <Clock className="w-4 h-4 group-hover:text-primary transition-colors" />
               History
             </Link>
+            {isAdmin && (
+              <Link to="/admin" className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors group">
+                <Shield className="w-4 h-4 group-hover:text-primary transition-colors" />
+                Admin
+              </Link>
+            )}
           </div>
           
           <div className="flex items-center gap-3">
@@ -61,14 +117,102 @@ const Navbar = () => {
                 </Button>
               </Link>
             ) : (
-              <Button onClick={handleLogout} variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">
-                <LogOut className="w-4 h-4 mr-2" />
-                Logout
+              <Button 
+                onClick={handleLogout} 
+                variant="ghost" 
+                size="sm" 
+                disabled={isLoggingOut}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                {isLoggingOut ? (
+                  <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />
+                ) : (
+                  <LogOut className="w-4 h-4 mr-2" />
+                )}
+                {isLoggingOut ? 'Logging out...' : 'Logout'}
               </Button>
             )}
           </div>
         </div>
+
+        {/* Mobile Navigation */}
+        <div className="md:hidden flex items-center gap-3">
+          <Link to="/visits/new">
+            <Button size="sm" className="gradient-primary hover:shadow-glow transition-all duration-300 border-0">
+              <Plus className="w-4 h-4" />
+            </Button>
+          </Link>
+          
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            {mobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+          </Button>
+        </div>
       </nav>
+
+      {/* Mobile Menu */}
+      {mobileMenuOpen && (
+        <div className="md:hidden border-t border-border/40 bg-background/95 backdrop-blur-xl">
+          <div className="container mx-auto px-4 py-4 space-y-3">
+            <Link 
+              to="/schools" 
+              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors py-2"
+              onClick={() => setMobileMenuOpen(false)}
+            >
+              <Building2 className="w-4 h-4" />
+              Schools
+            </Link>
+            <Link 
+              to="/history" 
+              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors py-2"
+              onClick={() => setMobileMenuOpen(false)}
+            >
+              <Clock className="w-4 h-4" />
+              History
+            </Link>
+            {isAdmin && (
+              <Link 
+                to="/admin" 
+                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors py-2"
+                onClick={() => setMobileMenuOpen(false)}
+              >
+                <Shield className="w-4 h-4" />
+                Admin
+              </Link>
+            )}
+            {!authed ? (
+              <Link 
+                to="/login" 
+                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors py-2"
+                onClick={() => setMobileMenuOpen(false)}
+              >
+                <LogIn className="w-4 h-4" />
+                Login
+              </Link>
+            ) : (
+              <button 
+                onClick={() => {
+                  handleLogout();
+                  setMobileMenuOpen(false);
+                }}
+                disabled={isLoggingOut}
+                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors py-2 w-full text-left disabled:opacity-50"
+              >
+                {isLoggingOut ? (
+                  <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <LogOut className="w-4 h-4" />
+                )}
+                {isLoggingOut ? 'Logging out...' : 'Logout'}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
     </header>
   );
 };

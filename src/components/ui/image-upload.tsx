@@ -11,6 +11,7 @@ interface ImageUploadProps {
   sectionCode?: string;
   onImageUploaded?: (imageData: any) => void;
   onImageRemoved?: (imageId: string) => void;
+  ensureVisitId?: () => Promise<string>;
   existingImages?: Array<{
     id: string;
     filename: string;
@@ -26,6 +27,7 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
   sectionCode,
   onImageUploaded,
   onImageRemoved,
+  ensureVisitId,
   existingImages = []
 }) => {
   const [isUploading, setIsUploading] = useState(false);
@@ -54,9 +56,14 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
   const handleUpload = async () => {
     if (!selectedFile) return;
     
-    if (!visitId) {
-      alert('Please save the visit first before uploading images');
-      return;
+    let resolvedVisitId = visitId;
+    if (!resolvedVisitId) {
+      if (!ensureVisitId) {
+        alert('Please save the visit first before uploading images');
+        return;
+      }
+      resolvedVisitId = await ensureVisitId();
+      if (!resolvedVisitId) return;
     }
 
     setIsUploading(true);
@@ -93,7 +100,7 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
         const { data: imageData, error: dbError } = await supabase
           .from('visit_images')
           .insert({
-            visit_id: visitId,
+            visit_id: resolvedVisitId,
             filename: fileName,
             original_name: selectedFile.name,
             mime_type: selectedFile.type,

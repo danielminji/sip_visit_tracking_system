@@ -1,4 +1,4 @@
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
+import { PDFDocument, StandardFonts, rgb, PDFImage } from 'pdf-lib'
 import { standardsConfig } from '@/standards/config'
 
 type SectionInput = {
@@ -13,6 +13,8 @@ type SectionInput = {
   evidenceLabels: string[]
   evidenceChecked: boolean[]
   score?: number|null
+  remarks?: string
+  lainLainText?: string
 }
 
 export type ReportExport = {
@@ -47,6 +49,28 @@ function wrapText(text: string, maxWidth: number, font: any, size: number): stri
   }
   if (line) lines.push(line)
   return lines
+}
+
+async function embedImageFromUrl(url: string, doc: PDFDocument): Promise<PDFImage | null> {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Failed to fetch image: ${response.statusText}`);
+    const arrayBuffer = await response.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
+    
+    // Try to determine image format from URL or content
+    if (url.includes('.jpg') || url.includes('.jpeg')) {
+      return await doc.embedJpg(uint8Array);
+    } else if (url.includes('.png')) {
+      return await doc.embedPng(uint8Array);
+    } else {
+      // Default to JPEG
+      return await doc.embedJpg(uint8Array);
+    }
+  } catch (error) {
+    console.error('Failed to embed image:', error);
+    return null;
+  }
 }
 
 export async function generateVisitReportPdf(data: ReportExport): Promise<Blob> {
@@ -95,20 +119,59 @@ export async function generateVisitReportPdf(data: ReportExport): Promise<Blob> 
   if (data.pgb) draw(`PGB: ${data.pgb}`)
   if (data.sesiBimbingan) draw(`Sesi Bimbingan: ${data.sesiBimbingan}`)
 
-  // Sections
-  for (const s of data.sections) {
-    // Only output if there is any content
-    const anySelected = (arr?: boolean[]) => (arr ?? []).some(Boolean)
-    const hasDo = !!(s.doText && s.doText.trim())
-    const hasAct = !!(s.actText && s.actText.trim())
-    const hasChecklistSelected = anySelected(s.checklistChecked)
-    const hasEvidenceSelected = anySelected(s.evidenceChecked)
-    const hasScore = typeof s.score === 'number'
+  // Images section - place all images at the top after personal information
+  if (data.images && data.images.length > 0) {
+    ensureRoom(250); // Ensure enough room for a large image + padding
+    draw('IMAGES:', { bold: true });
+    y -= 20; // More space after IMAGES heading
     
-    // Only show sections that have actual user input (not just default PLAN content)
-    if (!(hasDo || hasAct || hasChecklistSelected || hasEvidenceSelected || hasScore)) {
-      continue
+    const imageIndent = 20; // Indent from the left margin
+    const imageWidth = 400; // Wider image (e.g., 16:9 aspect ratio with height 225)
+    const imageHeight = 225; // Height for 16:9 aspect ratio
+    
+    for (const img of data.images) {
+      try {
+        const pdfImage = await embedImageFromUrl(img.public_url || '', doc);
+        if (pdfImage) {
+          ensureRoom(imageHeight + 40); // Ensure room for image + space below it
+          
+          // Draw the image with indent
+          page.drawImage(pdfImage, {
+            x: x + imageIndent,
+            y: y - imageHeight,
+            width: imageWidth,
+            height: imageHeight,
+          });
+          
+          // Add image description below with more space
+          const description = img.description || img.original_name;
+          const descLines = wrapText(description, imageWidth, font, 9);
+          descLines.forEach((line, idx) => {
+            page.drawText(line, {
+              x: x + imageIndent,
+              y: y - imageHeight - 20 - (idx * 12),
+              size: 9,
+              font,
+              color: rgb(0.5, 0.5, 0.5),
+            });
+          });
+          
+          y -= (imageHeight + 40); // Move y down for the next image, with space
+        }
+      } catch (error) {
+        console.error('Failed to embed image:', error);
+        // Fallback to text if image embedding fails
+        ensureRoom(30);
+        drawWrapped(`• ${img.description || img.original_name} (image not available)`, { bullet: undefined });
+        y -= 30;
+      }
     }
+    
+    y -= 20; // Add additional space after the entire image section
+  }
+
+  // Sections - include ALL forms, not just those with content
+  for (const s of data.sections) {
     ensureRoom(28)
     
     // Split title into main title and subtitle
@@ -157,62 +220,64 @@ export async function generateVisitReportPdf(data: ReportExport): Promise<Blob> 
     }
 
     // DO
-    if (hasDo) {
-      ensureRoom()
-      draw('DO:', { bold: true })
-      drawWrapped(s.doText!)
-      y -= 8 // Add space after DO
-    } else if (s.doText !== undefined) {
-      // Show DO section even if empty, but only if it was explicitly set
-      ensureRoom()
-      draw('DO:', { bold: true })
-      drawWrapped(s.doText || 'No implementation details provided')
-      y -= 8 // Add space after DO
+    ensureRoom()
+    draw('DO:', { bold: true })
+    if (s.doText && s.doText.trim()) {
+      drawWrapped(s.doText)
+    } else {
+      drawWrapped('No implementation details provided')
     }
+    y -= 8 // Add space after DO
 
     // CHECK
     if (s.checklistLabels && s.checklistLabels.length > 0) {
       ensureRoom()
       draw('CHECK:', { bold: true })
       s.checklistLabels.forEach((label, idx) => {
-        const checked = s.checklistChecked[idx] || false
-        drawWrapped(`${checked ? '[x]' : '[ ]'} ${label}`)
+        const checked = s.checklistChecked[idx] ? '[X]' : '[ ]'
+        drawWrapped(`${checked} ${label}`)
       })
       y -= 8 // Add space after CHECK
     }
 
-    // EVIDENCE (selected only)
-    const selectedEvidence = s.evidenceLabels.filter((_, idx) => s.evidenceChecked[idx])
-    if (selectedEvidence.length > 0) {
+    // ACT
+    ensureRoom()
+    draw('ACT:', { bold: true })
+    if (s.actText && s.actText.trim()) {
+      drawWrapped(s.actText)
+    } else {
+      drawWrapped('No follow-up actions provided')
+    }
+    y -= 8 // Add space after ACT
+
+    // EVIDENCE
+    if (s.evidenceLabels && s.evidenceLabels.length > 0) {
       ensureRoom()
       draw('EVIDENCE:', { bold: true })
-      selectedEvidence.forEach((label) => drawWrapped(`• ${label}`))
+      s.evidenceLabels.forEach((label, idx) => {
+        const checked = s.evidenceChecked[idx] ? '[X]' : '[ ]'
+        drawWrapped(`${checked} ${label}`)
+      })
       y -= 8 // Add space after EVIDENCE
     }
 
-    // ACT
-    if (hasAct) {
+    // REMARKS
+    if (s.remarks && s.remarks.trim()) {
       ensureRoom()
-      draw('ACT:', { bold: true })
-      drawWrapped(s.actText!)
-      y -= 8 // Add space after ACT
+      draw('REMARKS:', { bold: true })
+      drawWrapped(s.remarks)
+      y -= 8 // Add space after REMARKS
     }
 
-    // IMAGES for this section
-    const sectionImages = (data.images || []).filter(img => img.section_code === s.standardCode || img.section_code === null);
-    if (sectionImages.length > 0) {
-      ensureRoom(50)
-      draw('IMAGES:', { bold: true })
-      sectionImages.forEach((img, idx) => {
-        const description = img.description || img.original_name;
-        drawWrapped(`• ${description}`, { bullet: undefined });
-        if (idx < sectionImages.length - 1) y -= 2; // Less space between image items
-      });
-      y -= 8 // Add space after IMAGES
+    // LAIN-LAIN
+    if (s.lainLainText && s.lainLainText.trim()) {
+      ensureRoom()
+      draw('LAIN-LAIN:', { bold: true })
+      drawWrapped(s.lainLainText)
+      y -= 8 // Add space after LAIN-LAIN
     }
-    
-    // Add more space between sections
-    y -= 20
+
+    y -= 15 // Add space between sections
   }
 
   const bytes = await doc.save()
@@ -234,32 +299,42 @@ export function buildReportSectionsFromState(localSections: any, pageIndex: Reco
     const standardPages = stdCfg.pages || []
     
     for (const page of standardPages) {
-      const ev = (localSections[std]?.evidences ?? []) as boolean[]
+      const pageKey = `${std}-${page.code}`;
+      const pageSection = localSections[pageKey];
+      
+      if (!pageSection) continue;
+      
+      const ev = (pageSection.evidences ?? []) as boolean[]
       const checkLen = page.check?.checkboxes?.length ?? 0
       const evidenceLen = page.evidenceLabels?.length ?? 0
       
-      // Only include pages that have meaningful data
-      const hasData = localSections[std]?.doText || 
-                     localSections[std]?.actText || 
-                     localSections[std]?.score !== undefined ||
-                     (localSections[std]?.evidences && localSections[std].evidences.some(Boolean)) ||
-                     localSections[std]?.remarks
+      // Only include pages that have meaningful data (not blank forms)
+      const hasMeaningfulData = 
+        (pageSection.doText && pageSection.doText.trim().length > 0) ||
+        (pageSection.actText && pageSection.actText.trim().length > 0) ||
+        (pageSection.score !== undefined && pageSection.score !== null) ||
+        (pageSection.evidences && pageSection.evidences.some(Boolean)) ||
+        (pageSection.remarks && pageSection.remarks.trim().length > 0) ||
+        (pageSection.lainLainText && pageSection.lainLainText.trim().length > 0)
       
-      if (hasData) {
-        out.push({
-          standardCode: std,
-          pageCode: page.code,
-          title: page.title,
-          plan: page.plan ?? [],
-          doText: localSections[std]?.doText ?? '',
-          actText: localSections[std]?.actText ?? '',
-          checklistLabels: page.check?.checkboxes ?? [],
-          checklistChecked: ev.slice(0, checkLen),
-          evidenceLabels: page.evidenceLabels ?? [],
-          evidenceChecked: ev.slice(0, evidenceLen),
-          score: localSections[std]?.score ?? null,
-        })
-      }
+      // Skip this page if it has no meaningful data
+      if (!hasMeaningfulData) continue;
+      
+      out.push({
+        standardCode: std,
+        pageCode: page.code,
+        title: page.title,
+        plan: page.plan ?? [],
+        doText: pageSection.doText ?? '',
+        actText: pageSection.actText ?? '',
+        checklistLabels: page.check?.checkboxes ?? [],
+        checklistChecked: ev.slice(0, checkLen),
+        evidenceLabels: page.evidenceLabels ?? [],
+        evidenceChecked: ev.slice(0, evidenceLen),
+        score: pageSection.score ?? null,
+        remarks: pageSection.remarks ?? '',
+        lainLainText: pageSection.lainLainText ?? ''
+      })
     }
   }
   
