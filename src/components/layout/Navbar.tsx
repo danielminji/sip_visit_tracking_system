@@ -49,6 +49,8 @@ const Navbar = () => {
   const handleLogout = async () => {
     try {
       setIsLoggingOut(true);
+      
+      // First, try to sign out from Supabase
       const { error } = await supabase.auth.signOut();
       
       if (error) {
@@ -57,18 +59,30 @@ const Navbar = () => {
         return;
       }
       
-      // Clear any local state
+      // Clear any local state immediately
       setAuthed(false);
       setIsAdmin(false);
       setMobileMenuOpen(false);
       
-      // Navigate to login page
-      navigate("/login");
-      toast.success('Logged out successfully');
+      // Force clear any stored session data
+      localStorage.removeItem('supabase.auth.token');
+      sessionStorage.clear();
+      
+      // Force a complete page reload to ensure clean state
+      window.location.href = '/login';
+      
     } catch (error) {
       console.error('Logout error:', error);
       toast.error('Failed to logout. Please try again.');
+      
+      // Even if there's an error, force logout by reloading
+      setAuthed(false);
+      setIsAdmin(false);
+      setMobileMenuOpen(false);
+      window.location.href = '/login';
+      
     } finally {
+      // Always reset the loading state
       setIsLoggingOut(false);
     }
   };

@@ -24,6 +24,13 @@ const VisitForm = () => {
   const { id: editVisitId } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const isEditing = !!editVisitId;
+  const [isLoading, setIsLoading] = useState(true);
+  
+  // Add a small delay to prevent flash of loading state
+  useEffect(() => {
+    const timer = setTimeout(() => setIsLoading(false), 100);
+    return () => clearTimeout(timer);
+  }, []);
   
   const standards = [
     {
@@ -903,6 +910,20 @@ const VisitForm = () => {
       toast({ title: "Copy failed", description: error.message, variant: "destructive" });
     }
   };
+
+  // Show loading state briefly to prevent white screen
+  if (isLoading) {
+    return (
+      <main className="min-h-screen bg-background">
+        <div className="flex items-center justify-center min-h-screen">
+          <div className="text-center">
+            <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+            <p className="text-muted-foreground">Loading visit form...</p>
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-background">
