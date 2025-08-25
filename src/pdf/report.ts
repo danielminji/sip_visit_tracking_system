@@ -1,5 +1,16 @@
+// Import PDF-lib synchronously to prevent dynamic import issues
 import { PDFDocument, StandardFonts, rgb, PDFImage } from 'pdf-lib'
 import { standardsConfig } from '@/standards/config'
+
+// Add error handling wrapper
+const safeImport = async (importFn: () => Promise<any>) => {
+  try {
+    return await importFn();
+  } catch (error) {
+    console.error('Failed to import PDF module:', error);
+    throw new Error('PDF generation module failed to load. Please refresh the page and try again.');
+  }
+};
 
 type SectionInput = {
   standardCode: '1'|'2'|'3.1'|'3.2'|'3.3'
@@ -74,7 +85,8 @@ async function embedImageFromUrl(url: string, doc: PDFDocument): Promise<PDFImag
 }
 
 export async function generateVisitReportPdf(data: ReportExport): Promise<Blob> {
-  const doc = await PDFDocument.create()
+  try {
+    const doc = await PDFDocument.create()
   let page = doc.addPage([595.28, 841.89]) // A4 portrait
   const font = await doc.embedFont(StandardFonts.Helvetica)
   const bold = await doc.embedFont(StandardFonts.HelveticaBold)
@@ -282,6 +294,10 @@ export async function generateVisitReportPdf(data: ReportExport): Promise<Blob> 
 
   const bytes = await doc.save()
   return new Blob([bytes], { type: 'application/pdf' })
+  } catch (error) {
+    console.error('PDF generation failed:', error);
+    throw new Error('Failed to generate PDF. Please try again or contact support if the issue persists.');
+  }
 }
 
 // Helper to build SectionInput rows for current in-memory state (used by VisitForm)

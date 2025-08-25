@@ -11,7 +11,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { generateVisitReportPdf } from "@/pdf/report";
+import { generateVisitReportPdf, buildReportSectionsFromState } from "@/pdf/report";
 import { standardsConfig } from "@/standards/config";
 import { toast } from "@/components/ui/use-toast";
 
@@ -139,50 +139,69 @@ const History = () => {
     return rows;
   };
 
-  // Function to view visit details
+  // Function to view visit details with retry mechanism
   const handleViewVisit = async (visit: any) => {
-    try {
-      // Fetch detailed page rows; if none, fall back to synthesizing from visit_sections
-      let pageRows = await fetchPagesForVisit(visit.id);
-      if (!pageRows || pageRows.length === 0) {
-        pageRows = await fetchFallbackSectionsAsPages(visit.id);
+    const maxRetries = 3;
+    let retryCount = 0;
+    
+    while (retryCount < maxRetries) {
+      try {
+        // Fetch detailed page rows; if none, fall back to synthesizing from visit_sections
+        let pageRows = await fetchPagesForVisit(visit.id);
+        if (!pageRows || pageRows.length === 0) {
+          pageRows = await fetchFallbackSectionsAsPages(visit.id);
+        }
+        // Use the static import instead of dynamic import
+
+        const localSections: any = {};
+        for (const pageRow of pageRows || []) {
+          const pageKey = `${pageRow.standard_code}-${pageRow.page_code}`;
+          localSections[pageKey] = {
+            code: pageKey,
+            standardCode: pageRow.standard_code,
+            pageCode: pageRow.page_code,
+            score: pageRow.data?.score ?? undefined,
+            evidences: pageRow.data?.evidences ?? [],
+            remarks: pageRow.data?.remarks ?? '',
+            doText: pageRow.data?.doText ?? '',
+            actText: pageRow.data?.actText ?? '',
+            lainLainText: pageRow.data?.lainLainText ?? ''
+          };
+        }
+
+        const sections = buildReportSectionsFromState(localSections, {});
+        const images = await fetchVisitImages(visit.id);
+
+        const blob = await generateVisitReportPdf({
+          schoolName: visit.schools?.name ?? '',
+          visitDate: visit.visit_date,
+          officerName: visit.officer_name,
+          pgb: visit.pgb,
+          sesiBimbingan: visit.sesi_bimbingan,
+          sections,
+          images
+        });
+
+        const url = URL.createObjectURL(blob);
+        window.open(url, '_blank');
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        return; // Success, exit retry loop
+      } catch (error: any) {
+        retryCount++;
+        console.error(`PDF generation attempt ${retryCount} failed:`, error);
+        
+        if (retryCount >= maxRetries) {
+          toast({ 
+            title: 'View failed', 
+            description: `Failed to generate PDF after ${maxRetries} attempts. Please try refreshing the page.`, 
+            variant: 'destructive' 
+          });
+          return;
+        }
+        
+        // Wait before retrying
+        await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
       }
-      const { generateVisitReportPdf, buildReportSectionsFromState } = await import('@/pdf/report');
-
-      const localSections: any = {};
-      for (const pageRow of pageRows || []) {
-        const pageKey = `${pageRow.standard_code}-${pageRow.page_code}`;
-        localSections[pageKey] = {
-          code: pageKey,
-          standardCode: pageRow.standard_code,
-          pageCode: pageRow.page_code,
-          score: pageRow.data?.score ?? undefined,
-          evidences: pageRow.data?.evidences ?? [],
-          remarks: pageRow.data?.remarks ?? '',
-          doText: pageRow.data?.doText ?? '',
-          actText: pageRow.data?.actText ?? '',
-          lainLainText: pageRow.data?.lainLainText ?? ''
-        };
-      }
-
-      const sections = buildReportSectionsFromState(localSections, {});
-      const images = await fetchVisitImages(visit.id);
-
-      const blob = await generateVisitReportPdf({
-        schoolName: visit.schools?.name ?? '',
-        visitDate: visit.visit_date,
-        officerName: visit.officer_name,
-        pgb: visit.pgb,
-        sesiBimbingan: visit.sesi_bimbingan,
-        sections,
-        images
-      });
-
-      const url = URL.createObjectURL(blob);
-      window.open(url, '_blank');
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch (error: any) {
-      toast({ title: 'View failed', description: error?.message ?? 'Unexpected error', variant: 'destructive' });
     }
   };
 
@@ -279,53 +298,72 @@ const History = () => {
                                 <Eye className="w-4 h-4 mr-2" /> View
                               </Button>
                               <Button size="sm" variant="outline" className="ml-2" onClick={async () => {
-                                try {
-                                  toast({ title: "Generating PDF...", description: "Please wait while we prepare your report." });
+                                const maxRetries = 3;
+                                let retryCount = 0;
+                                
+                                while (retryCount < maxRetries) {
+                                  try {
+                                    toast({ title: "Generating PDF...", description: "Please wait while we prepare your report." });
 
-                                  // Fetch detailed page rows; if none, fall back from summaries
-                                  let pageRows = await fetchPagesForVisit(v.id);
-                                  if (!pageRows || pageRows.length === 0) {
-                                    pageRows = await fetchFallbackSectionsAsPages(v.id);
+                                    // Fetch detailed page rows; if none, fall back from summaries
+                                    let pageRows = await fetchPagesForVisit(v.id);
+                                    if (!pageRows || pageRows.length === 0) {
+                                      pageRows = await fetchFallbackSectionsAsPages(v.id);
+                                    }
+
+                                    // Convert page data to localSections format (same as VisitForm)
+                                    const localSections: any = {};
+                                    for (const pageRow of pageRows || []) {
+                                      const pageKey = `${pageRow.standard_code}-${pageRow.page_code}`;
+                                      localSections[pageKey] = {
+                                        code: pageKey,
+                                        standardCode: pageRow.standard_code,
+                                        pageCode: pageRow.page_code,
+                                        score: pageRow.data?.score ?? undefined,
+                                        evidences: pageRow.data?.evidences ?? [],
+                                        remarks: pageRow.data?.remarks ?? '',
+                                        doText: pageRow.data?.doText ?? '',
+                                        actText: pageRow.data?.actText ?? '',
+                                        lainLainText: pageRow.data?.lainLainText ?? ''
+                                      };
+                                    }
+
+                                    // Use the static import instead of dynamic import
+                                    const sections = buildReportSectionsFromState(localSections, {});
+                                    const images = await fetchVisitImages(v.id);
+
+                                    const blob = await generateVisitReportPdf({
+                                      schoolName: v.schools?.name ?? '',
+                                      visitDate: v.visit_date,
+                                      officerName: v.officer_name,
+                                      pgb: v.pgb,
+                                      sesiBimbingan: v.sesi_bimbingan,
+                                      sections,
+                                      images
+                                    });
+
+                                    const url = URL.createObjectURL(blob);
+                                    const a = document.createElement('a');
+                                    a.href = url; a.download = 'visit-report.pdf'; a.click(); URL.revokeObjectURL(url);
+
+                                    toast({ title: "✅ Report downloaded successfully!", description: "Visit report has been downloaded successfully.", duration: 3000, className: "bg-green-50 border-green-200 text-green-800" });
+                                    return; // Success, exit retry loop
+                                  } catch (error: any) {
+                                    retryCount++;
+                                    console.error(`PDF download attempt ${retryCount} failed:`, error);
+                                    
+                                    if (retryCount >= maxRetries) {
+                                      toast({ 
+                                        title: 'Report failed', 
+                                        description: `Failed to generate PDF after ${maxRetries} attempts. Please try refreshing the page.`, 
+                                        variant: 'destructive' 
+                                      });
+                                      return;
+                                    }
+                                    
+                                    // Wait before retrying
+                                    await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
                                   }
-
-                                  // Convert page data to localSections format (same as VisitForm)
-                                  const localSections: any = {};
-                                  for (const pageRow of pageRows || []) {
-                                    const pageKey = `${pageRow.standard_code}-${pageRow.page_code}`;
-                                    localSections[pageKey] = {
-                                      code: pageKey,
-                                      standardCode: pageRow.standard_code,
-                                      pageCode: pageRow.page_code,
-                                      score: pageRow.data?.score ?? undefined,
-                                      evidences: pageRow.data?.evidences ?? [],
-                                      remarks: pageRow.data?.remarks ?? '',
-                                      doText: pageRow.data?.doText ?? '',
-                                      actText: pageRow.data?.actText ?? '',
-                                      lainLainText: pageRow.data?.lainLainText ?? ''
-                                    };
-                                  }
-
-                                  const { generateVisitReportPdf, buildReportSectionsFromState } = await import('@/pdf/report');
-                                  const sections = buildReportSectionsFromState(localSections, {});
-                                  const images = await fetchVisitImages(v.id);
-
-                                  const blob = await generateVisitReportPdf({
-                                    schoolName: v.schools?.name ?? '',
-                                    visitDate: v.visit_date,
-                                    officerName: v.officer_name,
-                                    pgb: v.pgb,
-                                    sesiBimbingan: v.sesi_bimbingan,
-                                    sections,
-                                    images
-                                  });
-
-                                  const url = URL.createObjectURL(blob);
-                                  const a = document.createElement('a');
-                                  a.href = url; a.download = 'visit-report.pdf'; a.click(); URL.revokeObjectURL(url);
-
-                                  toast({ title: "✅ Report downloaded successfully!", description: "Visit report has been downloaded successfully.", duration: 3000, className: "bg-green-50 border-green-200 text-green-800" });
-                                } catch (error: any) {
-                                  toast({ title: 'Report failed', description: error?.message ?? 'Unexpected error', variant: 'destructive' });
                                 }
                               }}>
                                 <Download className="w-4 h-4 mr-3" /> Report

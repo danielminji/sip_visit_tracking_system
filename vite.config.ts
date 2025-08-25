@@ -19,4 +19,31 @@ export default defineConfig(({ mode }) => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Separate PDF generation into its own chunk
+          'pdf-lib': ['pdf-lib'],
+          // Keep React and core libraries together
+          'vendor': ['react', 'react-dom', 'react-router-dom'],
+          // Separate UI components
+          'ui': ['@radix-ui/react-accordion', '@radix-ui/react-dialog', '@radix-ui/react-dropdown-menu'],
+        },
+        // Ensure chunks are named consistently
+        chunkFileNames: (chunkInfo) => {
+          const facadeModuleId = chunkInfo.facadeModuleId ? chunkInfo.facadeModuleId.split('/').pop() : 'chunk';
+          return `assets/${facadeModuleId}-[hash].js`;
+        },
+      },
+    },
+    // Increase chunk size warning limit
+    chunkSizeWarningLimit: 1000,
+    // Optimize for production
+    target: 'es2015',
+    minify: 'esbuild',
+  },
+  optimizeDeps: {
+    include: ['pdf-lib', 'react', 'react-dom'],
+  },
 }));
