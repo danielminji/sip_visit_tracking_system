@@ -14,6 +14,7 @@ import Signup from "./pages/Signup";
 import AdminDashboard from "./pages/AdminDashboard";
 import { useEffect, useState, Component, ReactNode } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { Analytics } from "@vercel/analytics/react";
 
 const queryClient = new QueryClient();
 
