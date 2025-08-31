@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "esnext",
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "strict": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "https://esm.sh/react@18.2.0/",
+    "types": [
+      "https://esm.sh/v111/@supabase/functions-js@2.1.0/src/edge-runtime.d.ts"
+    ]
+  },
+  "include": [
+    "./**/*.ts"
+  ]
+}

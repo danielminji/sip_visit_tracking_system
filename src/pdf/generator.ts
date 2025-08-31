@@ -47,24 +47,35 @@ function drawMultilineText(page: any, text: string, map: SectionMap['remarks'], 
   });
 }
 
-async function embedImageFromUrl(url: string): Promise<PDFImage | null> {
+async function embedImageFromUrl(doc: PDFDocument, url: string): Promise<PDFImage | null> {
   try {
     const response = await fetch(url);
-    if (!response.ok) throw new Error(`Failed to fetch image: ${response.statusText}`);
-    const arrayBuffer = await response.arrayBuffer();
-    const uint8Array = new Uint8Array(arrayBuffer);
-    
-    // Try to determine image format from URL or content
-    if (url.includes('.jpg') || url.includes('.jpeg')) {
-      return await PDFImage.embed(uint8Array, 'jpeg');
-    } else if (url.includes('.png')) {
-      return await PDFImage.embed(uint8Array, 'png');
-    } else {
-      // Default to JPEG
-      return await PDFImage.embed(uint8Array, 'jpeg');
+    if (!response.ok) {
+      console.error(`Failed to fetch image: ${response.statusText}`);
+      return null;
     }
+    const contentType = response.headers.get('content-type');
+    const arrayBuffer = await response.arrayBuffer();
+
+    if (contentType?.includes('jpeg') || contentType?.includes('jpg')) {
+      return await doc.embedJpg(arrayBuffer);
+    }
+    if (contentType?.includes('png')) {
+      return await doc.embedPng(arrayBuffer);
+    }
+
+    // Fallback to guessing from URL
+    if (url.endsWith('.jpg') || url.endsWith('.jpeg')) {
+      return await doc.embedJpg(arrayBuffer);
+    }
+    if (url.endsWith('.png')) {
+      return await doc.embedPng(arrayBuffer);
+    }
+
+    console.warn(`Unknown image type for ${url}, attempting to embed as JPG.`);
+    return await doc.embedJpg(arrayBuffer);
   } catch (error) {
-    console.error('Failed to embed image:', error);
+    console.error(`Failed to embed image from ${url}:`, error);
     return null;
   }
 }
@@ -113,86 +124,58 @@ export async function generateBorangPdf(data: VisitExport): Promise<Blob> {
   // Add a separate page for images if there are any
   if (data.images && data.images.length > 0) {
     const imageDoc = await PDFDocument.create();
-    const imagePage = imageDoc.addPage([595.28, 841.89]); // A4 portrait
+    let currentPage = imageDoc.addPage([595.28, 841.89]); // A4 portrait
     const font = await imageDoc.embedFont(StandardFonts.Helvetica);
     const bold = await imageDoc.embedFont(StandardFonts.HelveticaBold);
-    
-    // Add title
-    imagePage.drawText('Visit Images', { 
-      x: 50, 
-      y: 800, 
-      size: 18, 
-      font: bold, 
-      color: rgb(0,0,0) 
-    });
-    
-    // Add images in a grid
-    let imageY = 750;
-    const imageWidth = 150;
-    const imageHeight = 100;
-    const imagesPerRow = 3;
-    
-    for (let i = 0; i < data.images.length; i++) {
-      const img = data.images[i];
-      if (img.public_url) {
-        try {
-          const pdfImage = await embedImageFromUrl(img.public_url);
-          if (pdfImage) {
-            const row = Math.floor(i / imagesPerRow);
-            const col = i % imagesPerRow;
-            const x = 50 + col * (imageWidth + 20);
-            const y = imageY - row * (imageHeight + 40);
-            
-            // Check if we need a new page
-            if (y < 100) {
-              const newPage = imageDoc.addPage([595.28, 841.89]);
-              imageY = 750;
-              const newRow = Math.floor(i / imagesPerRow);
-              const newCol = i % imagesPerRow;
-              const newX = 50 + newCol * (imageWidth + 20);
-              const newY = imageY - newRow * (imageHeight + 40);
-              
-              newPage.drawImage(pdfImage, {
-                x: newX,
-                y: newY,
-                width: imageWidth,
-                height: imageHeight,
-              });
-              
-              // Add image description below
-              const description = img.description || img.original_name;
-              newPage.drawText(description, {
-                x: newX + 5,
-                y: newY - 15,
-                size: 8,
-                font,
-                color: rgb(0.5, 0.5, 0.5),
-              });
-            } else {
-              imagePage.drawImage(pdfImage, {
-                x,
-                y,
-                width: imageWidth,
-                height: imageHeight,
-              });
-              
-              // Add image description below
-              const description = img.description || img.original_name;
-              imagePage.drawText(description, {
-                x: x + 5,
-                y: y - 15,
-                size: 8,
-                font,
-                color: rgb(0.5, 0.5, 0.5),
-              });
-            }
-          }
-        } catch (error) {
-          console.error('Failed to add image to PDF:', error);
-        }
+
+    currentPage.drawText('Visit Images', { x: 50, y: 800, size: 18, font: bold });
+
+    const margin = 50;
+    const gutter = 20;
+    const imageWidth = (currentPage.getWidth() - margin * 2 - gutter * 2) / 3;
+    const imageHeight = imageWidth * (2 / 3);
+    const textHeight = 30;
+    const totalImageBlockHeight = imageHeight + textHeight;
+
+    let x = margin;
+    let y = 750;
+
+    for (const img of data.images) {
+      if (!img.public_url) continue;
+
+      if (y - totalImageBlockHeight < margin) {
+        currentPage = imageDoc.addPage([595.28, 841.89]);
+        x = margin;
+        y = 800;
+        currentPage.drawText('Visit Images (continued)', { x: 50, y: y, size: 18, font: bold });
+        y -= 50;
+      }
+
+      const pdfImage = await embedImageFromUrl(imageDoc, img.public_url);
+      if (pdfImage) {
+        const scaled = pdfImage.scaleToFit(imageWidth, imageHeight);
+        currentPage.drawImage(pdfImage, {
+          x,
+          y: y - scaled.height,
+          width: scaled.width,
+          height: scaled.height,
+        });
+
+        const description = img.description || img.original_name;
+        drawMultilineText(currentPage, description, {
+          x,
+          y: y - scaled.height - 15,
+          maxWidth: imageWidth,
+          lineHeight: 10,
+        }, font);
+      }
+
+      x += imageWidth + gutter;
+      if (x + imageWidth > currentPage.getWidth() - margin) {
+        x = margin;
+        y -= totalImageBlockHeight;
       }
     }
-    
     pdfs.push(imageDoc);
   }
 

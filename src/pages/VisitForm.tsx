@@ -184,8 +184,6 @@ const VisitForm = () => {
 
   // page navigation per standard (e.g., 1-2 → 1-3)
   const [pageIndex, setPageIndex] = useState<Record<string, number>>({ '1': 0, '2': 0, '3.1': 0, '3.2': 0, '3.3': 0 });
-  // per-page state (doText, checkScore, actText, evidences[], lainLainText)
-  const [pagesState, setPagesState] = useState<Record<string, { doText: string; checkScore: number|null; actText: string; evidences: boolean[]; lainLainText?: string }>>({});
 
   // State for managing visit images
   const [visitImages, setVisitImages] = useState<Array<{
@@ -266,32 +264,10 @@ const VisitForm = () => {
       setSesiBimbingan(existingVisit.sesi_bimbingan || '');
       setVisitImages(existingImages || []);
 
-      // Initialize localSections with all possible pages first
-      const initialSections: any = {};
-      const allStandards = ['1', '2', '3.1', '3.2', '3.3'] as const;
-      
-      for (const std of allStandards) {
-        const stdCfg = standardsConfig[std];
-        if (!stdCfg) continue;
-        
-        const standardPages = stdCfg.pages || [];
-        for (const page of standardPages) {
-          const pageKey = `${std}-${page.code}`;
-          initialSections[pageKey] = {
-            code: pageKey,
-            standardCode: std,
-            pageCode: page.code,
-            score: undefined,
-            evidences: [],
-            remarks: '',
-            doText: '',
-            actText: '',
-            lainLainText: ''
-          };
-        }
-      }
+      // Initialize a fresh sections state
+      const initialSections = initializeSections();
 
-      // Populate localSections from existingVisit.visit_pages (new structure)
+      // Populate from visit_pages (new, preferred structure)
       if (existingVisit.visit_pages) {
         for (const pageData of existingVisit.visit_pages) {
           const pageKey = `${pageData.standard_code}-${pageData.page_code}`;
@@ -299,30 +275,30 @@ const VisitForm = () => {
             initialSections[pageKey] = {
               ...initialSections[pageKey],
               score: pageData.data.score ?? undefined,
-              evidences: pageData.data.evidences || [],
+              evidences: pageData.data.evidences || Array((standardsConfig[pageData.standard_code]?.pages.find(p => p.code === pageData.page_code)?.evidenceLabels?.length) ?? 0).fill(false),
               remarks: pageData.data.remarks || '',
               doText: pageData.data.doText || '',
               actText: pageData.data.actText || '',
-              lainLainText: pageData.data.lainLainText || ''
+              lainLainText: pageData.data.lainLainText || '',
             };
           }
         }
       }
 
-      // Also populate from visit_sections for backward compatibility
+      // Populate from visit_sections for backward compatibility
       if (existingVisit.visit_sections) {
         for (const section of existingVisit.visit_sections) {
           const stdCode = section.section_code;
           const standardPages = standardsConfig[stdCode]?.pages || [];
-          
           for (const page of standardPages) {
             const pageKey = `${stdCode}-${page.code}`;
-            if (initialSections[pageKey]) {
+            // Only apply this legacy data if the page hasn't been populated by the new structure
+            if (initialSections[pageKey] && !existingVisit.visit_pages?.some(p => p.standard_code === stdCode && p.page_code === page.code)) {
               initialSections[pageKey] = {
                 ...initialSections[pageKey],
                 score: section.score ?? undefined,
-                evidences: section.evidences || [],
-                remarks: section.remarks || ''
+                evidences: section.evidences || Array(page.evidenceLabels?.length ?? 0).fill(false),
+                remarks: section.remarks || '',
               };
             }
           }
@@ -330,8 +306,6 @@ const VisitForm = () => {
       }
 
       setLocalSections(initialSections);
-
-      // Set currentVisitId if it's an existing visit
       setCurrentVisitId(existingVisit.id);
       setIsDraftCreated(existingVisit.status === 'draft');
     }
@@ -732,86 +706,41 @@ const VisitForm = () => {
     const stdCode = autoCloneStandard;
     if (!stdCode) return;
 
-    // Find the current page data for this standard
-    // We need to find a section that belongs to this standard to get the current data
-    const currentPageData = Object.values(localSections).find(section => 
-      section.standardCode === stdCode
-    );
-    
-    if (!currentPageData) return;
+    const currentPCode = currentPageCode(stdCode);
+    const sourcePageKey = `${stdCode}-${currentPCode}`;
+    const sourceData = localSections[sourcePageKey];
 
-    // Clone to all other pages in this standard
+    if (!sourceData) {
+      toast({ title: 'No data to clone', description: 'Please fill in the current page before cloning.', variant: 'destructive' });
+      return;
+    }
+
     const standardPages = standardsConfig[stdCode]?.pages || [];
     const updatedSections = { ...localSections };
     const updatedAutoFilled = { ...autoFilledFields };
 
-    // Clone data to all pages in this standard
     for (const page of standardPages) {
-      const pageKey = `${stdCode}-${page.code}`;
-      if (!updatedAutoFilled[pageKey]) updatedAutoFilled[pageKey] = new Set();
+      const targetPageKey = `${stdCode}-${page.code}`;
+      if (targetPageKey === sourcePageKey) continue; // Don't clone to self
 
-      // Create a new section entry for each page if it doesn't exist
-      if (!updatedSections[pageKey]) {
-        updatedSections[pageKey] = {
-          code: pageKey,
-          standardCode: stdCode,
-          pageCode: page.code,
-          evidences: [],
-          remarks: '',
-          score: undefined,
-          doText: '',
-          actText: ''
-        };
-      }
+      if (!updatedAutoFilled[targetPageKey]) updatedAutoFilled[targetPageKey] = new Set();
 
-      // Clone evidences
-      if (currentPageData.evidences) {
-        updatedSections[pageKey] = {
-          ...updatedSections[pageKey],
-          evidences: [...currentPageData.evidences],
-        };
-        updatedAutoFilled[pageKey].add('evidences');
-      }
+      const clonedData: Partial<LocalSection> = {};
 
-      // Clone other fields
-      if (currentPageData.doText) {
-        updatedSections[pageKey] = {
-          ...updatedSections[pageKey],
-          doText: currentPageData.doText,
-        };
-        updatedAutoFilled[pageKey].add('doText');
-      }
+      if (sourceData.doText) { clonedData.doText = sourceData.doText; updatedAutoFilled[targetPageKey].add('doText'); }
+      if (sourceData.actText) { clonedData.actText = sourceData.actText; updatedAutoFilled[targetPageKey].add('actText'); }
+      if (sourceData.remarks) { clonedData.remarks = sourceData.remarks; updatedAutoFilled[targetPageKey].add('remarks'); }
+      if (sourceData.score !== undefined) { clonedData.score = sourceData.score; updatedAutoFilled[targetPageKey].add('score'); }
+      if (sourceData.evidences) { clonedData.evidences = [...sourceData.evidences]; updatedAutoFilled[targetPageKey].add('evidences'); }
 
-      if (currentPageData.actText) {
-        updatedSections[pageKey] = {
-          ...updatedSections[pageKey],
-          actText: currentPageData.actText,
-        };
-        updatedAutoFilled[pageKey].add('actText');
-      }
-
-      if (currentPageData.remarks) {
-        updatedSections[pageKey] = {
-          ...updatedSections[pageKey],
-          remarks: currentPageData.remarks,
-        };
-        updatedAutoFilled[pageKey].add('remarks');
-      }
-
-      if (currentPageData.score !== undefined) {
-        updatedSections[pageKey] = {
-          ...updatedSections[pageKey],
-          score: currentPageData.score,
-        };
-        updatedAutoFilled[pageKey].add('score');
-      }
+      updatedSections[targetPageKey] = { ...updatedSections[targetPageKey], ...clonedData };
     }
 
     setLocalSections(updatedSections);
     setAutoFilledFields(updatedAutoFilled);
     toast({ 
       title: "Auto-fill completed", 
-      description: `Standard ${stdCode} has been auto-filled with current data. Check for "Auto-Filled" badges on other pages.`,
+      description: `Standard ${stdCode} has been auto-filled with data from page ${currentPCode}.`,
       duration: 5000
     });
   };
@@ -847,34 +776,9 @@ const VisitForm = () => {
       const updatedSections = { ...localSections };
       const updatedAutoFilled = { ...autoFilledFields };
 
-      // Clone visit sections (standard-level data)
-      if (lastVisit.visit_sections) {
-        for (const section of lastVisit.visit_sections) {
-          const stdCode = section.section_code;
-          // Find all pages in this standard and update them
-          const standardPages = standardsConfig[stdCode]?.pages || [];
-          for (const page of standardPages) {
-            const pageKey = `${stdCode}-${page.code}`;
-            if (updatedSections[pageKey]) {
-              updatedSections[pageKey] = {
-                ...updatedSections[pageKey],
-                score: section.score,
-                evidences: section.evidences || [],
-                remarks: section.remarks,
-              };
-
-              if (!updatedAutoFilled[pageKey]) updatedAutoFilled[pageKey] = new Set();
-              updatedAutoFilled[pageKey].add('score');
-              updatedAutoFilled[pageKey].add('evidences');
-              updatedAutoFilled[pageKey].add('remarks');
-            }
-          }
-        }
-      }
 
       // Clone visit pages data (page-level data)
       if (lastVisit.visit_pages) {
-        
         for (const page of lastVisit.visit_pages) {
           const stdCode = page.standard_code;
           const pageCode = page.page_code;

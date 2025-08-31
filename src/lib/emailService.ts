@@ -1,188 +1,87 @@
 import emailjs from '@emailjs/browser';
 
-// EmailJS Configuration
-const SERVICE_ID = 'service_eysurf6';
-const TEMPLATE_ID = 'template_d43gz5d';
+// --- EmailJS Configuration ---
+const SERVICE_ID = import.meta.env.VITE_EMAILJS_SERVICE_ID;
+const PUBLIC_KEY = import.meta.env.VITE_EMAILJS_PUBLIC_KEY;
+const ADMIN_TEMPLATE_ID = import.meta.env.VITE_EMAILJS_ADMIN_TEMPLATE_ID;
+const USER_STATUS_TEMPLATE_ID = import.meta.env.VITE_EMAILJS_USER_STATUS_TEMPLATE_ID;
 
-// Initialize EmailJS
-emailjs.init(import.meta.env.VITE_EMAILJS_PUBLIC_KEY || '');
+// --- Application Configuration ---
+const APP_NAME = import.meta.env.VITE_APP_NAME || 'SIP+ School Visit Tracking';
+const APP_URL = import.meta.env.VITE_APP_URL || window.location.origin;
+const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL;
 
-export interface EmailData {
-  to_email: string;
-  to_name: string;
-  from_name?: string;
-  from_email?: string;
-  subject: string;
-  message: string;
-  [key: string]: any;
+// --- Initialize EmailJS ---
+if (PUBLIC_KEY) {
+  emailjs.init(PUBLIC_KEY);
+} else {
+  console.error('EmailJS Public Key is missing. Please check your .env file.');
 }
 
-export const sendEmail = async (data: EmailData): Promise<void> => {
+// --- Core Email Sending Function ---
+export const sendEmail = async (templateId: string, data: Record<string, unknown>): Promise<void> => {
+  if (!SERVICE_ID || !templateId || !PUBLIC_KEY) {
+    const missing = [!SERVICE_ID && 'Service ID', !templateId && 'Template ID', !PUBLIC_KEY && 'Public Key'].filter(Boolean).join(', ');
+    console.error(`EmailJS configuration is incomplete. Missing: ${missing}`);
+    throw new Error('Email configuration is incomplete.');
+  }
+
   try {
-    const result = await emailjs.send(SERVICE_ID, TEMPLATE_ID, {
-      to_email: data.to_email,
-      to_name: data.to_name,
-      from_name: data.from_name || 'SIP+ System',
-      from_email: data.from_email || 'noreply@sip.edu.my',
-      subject: data.subject,
-      message: data.message,
-      ...data
-    });
-    
-    console.log('Email sent successfully:', result);
+    await emailjs.send(SERVICE_ID, templateId, data);
+    console.log(`Email sent successfully using template ${templateId}.`);
   } catch (error) {
     console.error('Failed to send email:', error);
-    throw error;
+    throw new Error('Failed to send email.');
   }
 };
 
-// HTML Email templates for different scenarios
-export const emailTemplates = {
-  // Admin notification for new registration
-  adminNotification: (data: { name: string; email: string; phone?: string }) => ({
-    to_email: 'admin@sip.edu.my', // Replace with actual admin email
-    to_name: 'SIP+ Administrator',
-    subject: 'New User Registration Pending Approval',
-    message: `
-<div style="font-family: system-ui, sans-serif, Arial; font-size: 16px; background-color: #fff8f1">
-  <div style="max-width: 600px; margin: auto; padding: 16px">
-    <a style="text-decoration: none; outline: none" href="${window.location.origin}" target="_blank">
-      <img
-        style="height: 32px; vertical-align: middle"
-        height="32px"
-        src="cid:logo.png"
-        alt="SIP+ Logo"
-      />
-    </a>
-    <h2 style="color: #333; margin: 20px 0;">New User Registration Pending Approval</h2>
-    <p>A new user has registered for SIP+ School Visit Tracking:</p>
-    <div style="background-color: #f8f9fa; padding: 16px; border-radius: 8px; margin: 16px 0;">
-      <p><strong>Name:</strong> ${data.name}</p>
-      <p><strong>Email:</strong> ${data.email}</p>
-      <p><strong>Phone:</strong> ${data.phone || 'Not provided'}</p>
-    </div>
-    <p>Please review and approve/reject this registration in the admin dashboard.</p>
-    <p>
-      <a
-        style="
-          display: inline-block;
-          text-decoration: none;
-          outline: none;
-          color: #fff;
-          background-color: #fc0038;
-          padding: 8px 16px;
-          border-radius: 4px;
-        "
-        href="${window.location.origin}/admin"
-        target="_blank"
-      >
-        Go to Admin Dashboard
-      </a>
-    </p>
-    <p>Best regards,<br />SIP+ System</p>
-  </div>
-</div>
-    `.trim()
-  }),
+// --- Template-Specific Functions ---
 
-  // User approval notification
-  userApproval: (data: { name: string; email: string }) => ({
-    to_email: data.email,
-    to_name: data.name,
-    subject: 'Welcome to SIP+ School Visit Tracking!',
-    message: `
-<div style="font-family: system-ui, sans-serif, Arial; font-size: 16px; background-color: #fff8f1">
-  <div style="max-width: 600px; margin: auto; padding: 16px">
-    <a style="text-decoration: none; outline: none" href="${window.location.origin}" target="_blank">
-      <img
-        style="height: 32px; vertical-align: middle"
-        height="32px"
-        src="cid:logo.png"
-        alt="SIP+ Logo"
-      />
-    </a>
-    <h2 style="color: #333; margin: 20px 0;">Welcome to SIP+ School Visit Tracking!</h2>
-    <p>Dear ${data.name},</p>
-    <p>Great news! Your SIP+ School Visit Tracking account has been approved.</p>
-    <p>You can now log in to your account and start using the system to:</p>
-    <ul style="margin: 16px 0; padding-left: 20px;">
-      <li>Create and manage school visits</li>
-      <li>Generate PDF reports</li>
-      <li>Track visit history</li>
-      <li>Upload photo evidence</li>
-    </ul>
-    <p>
-      <a
-        style="
-          display: inline-block;
-          text-decoration: none;
-          outline: none;
-          color: #fff;
-          background-color: #fc0038;
-          padding: 8px 16px;
-          border-radius: 4px;
-        "
-        href="${window.location.origin}/login"
-        target="_blank"
-      >
-        Login to SIP+
-      </a>
-    </p>
-    <p>If you have any questions or need help getting started, our support team is just an email away at
-      <a href="mailto:support@sip.edu.my" style="text-decoration: none; outline: none; color: #fc0038">support@sip.edu.my</a>. 
-      We're here to assist you every step of the way!
-    </p>
-    <p>Welcome aboard!</p>
-    <p>Best regards,<br />The SIP+ Team</p>
-  </div>
-</div>
-    `.trim()
-  }),
-
-  // User rejection notification
-  userRejection: (data: { name: string; email: string; reason?: string }) => ({
-    to_email: data.email,
-    to_name: data.name,
-    subject: 'SIP+ Account Registration Update',
-    message: `
-<div style="font-family: system-ui, sans-serif, Arial; font-size: 16px; background-color: #fff8f1">
-  <div style="max-width: 600px; margin: auto; padding: 16px">
-    <a style="text-decoration: none; outline: none" href="${window.location.origin}" target="_blank">
-      <img
-        style="height: 32px; vertical-align: middle"
-        height="32px"
-        src="cid:logo.png"
-        alt="SIP+ Logo"
-      />
-    </a>
-    <h2 style="color: #333; margin: 20px 0;">SIP+ Account Registration Update</h2>
-    <p>Dear ${data.name},</p>
-    <p>We regret to inform you that your SIP+ School Visit Tracking registration has not been approved at this time.</p>
-    ${data.reason ? `<div style="background-color: #f8f9fa; padding: 16px; border-radius: 8px; margin: 16px 0;">
-      <p><strong>Reason:</strong> ${data.reason}</p>
-    </div>` : '<p>Please contact the administrator for more information.</p>'}
-    <p>If you believe this is an error or would like to provide additional information, please contact the administrator at
-      <a href="mailto:admin@sip.edu.my" style="text-decoration: none; outline: none; color: #fc0038">admin@sip.edu.my</a>.
-    </p>
-    <p>Best regards,<br />The SIP+ Team</p>
-  </div>
-</div>
-    `.trim()
-  })
-};
-
-// Convenience functions
+/**
+ * Sends a notification to the admin about a new user registration.
+ */
 export const sendAdminNotification = async (userData: { name: string; email: string; phone?: string }) => {
-  const emailData = emailTemplates.adminNotification(userData);
-  await sendEmail(emailData);
+  if (!ADMIN_EMAIL) {
+    console.error('Admin email is not configured.');
+    return;
+  }
+  
+  const emailData = {
+    // For EmailJS template fields
+    to_email: ADMIN_EMAIL,
+    from_name: APP_NAME,
+    user_name: userData.name,
+    user_email: userData.email, // Used in the 'Reply To' field
+    user_phone: userData.phone || 'Not provided',
+    app_url: 'https://sipplus.vercel.app/login',
+  };
+
+  await sendEmail(ADMIN_TEMPLATE_ID, emailData);
 };
 
-export const sendUserApproval = async (userData: { name: string; email: string }) => {
-  const emailData = emailTemplates.userApproval(userData);
-  await sendEmail(emailData);
-};
+/**
+ * Sends a status update (approved/rejected) to a user.
+ */
+export const sendUserStatusUpdate = async (userData: { name: string; email: string; status: 'approved' | 'rejected'; reason?: string; }) => {
+  const isApproved = userData.status === 'approved';
 
-export const sendUserRejection = async (userData: { name: string; email: string; reason?: string }) => {
-  const emailData = emailTemplates.userRejection(userData);
-  await sendEmail(emailData);
+  const loginButtonHtml = isApproved
+    ? `<a href="https://sipplus.vercel.app/login" target="_blank" style="display: inline-block; text-decoration: none; outline: none; color: #fff; background-color: #fc8038; padding: 12px 24px; border-radius: 4px;">Login to Your Account</a>`
+    : '';
+
+  const emailData = {
+    // For EmailJS template fields
+    to_email: userData.email,
+    to_name: userData.name,
+    subject: isApproved ? `Welcome to ${APP_NAME}! Your Registration is Approved` : `Update on Your ${APP_NAME} Registration`,
+    status_title: isApproved ? 'Registration Approved!' : 'Registration Rejected',
+    status_message: isApproved
+      ? `Your account has been successfully created and you can now log in.`
+      : `We have reviewed your registration and unfortunately, it has been rejected.`,
+    admin_notes: userData.reason || 'No specific reason was provided.',
+    login_button: loginButtonHtml,
+    app_url: 'https://sipplus.vercel.app/login',
+  };
+
+  await sendEmail(USER_STATUS_TEMPLATE_ID, emailData);
 };

@@ -1,89 +1,37 @@
 import { Link, useNavigate } from "react-router-dom";
 import { Building2, Clock, LogIn, LogOut, Plus, Menu, X, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { useAuth } from "@/contexts/AuthContext";
 
 const Navbar = () => {
-  const [authed, setAuthed] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const { session, isAdmin } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const navigate = useNavigate();
 
-  useEffect(() => {
-    const check = async () => {
-      const { data } = await supabase.auth.getSession();
-      setAuthed(!!data.session);
-      
-      if (data.session) {
-        // Check if user is admin
-        const { data: adminData } = await supabase
-          .from('admin_users')
-          .select('*')
-          .eq('user_id', data.session.user.id)
-          .single();
-        
-        setIsAdmin(!!adminData);
-      }
-    };
-    check();
-    const { data: sub } = supabase.auth.onAuthStateChange(async (_e, session) => {
-      setAuthed(!!session);
-      if (session) {
-        const { data: adminData } = await supabase
-          .from('admin_users')
-          .select('*')
-          .eq('user_id', session.user.id)
-          .single();
-        
-        setIsAdmin(!!adminData);
-      } else {
-        setIsAdmin(false);
-      }
-    });
-    return () => sub.subscription.unsubscribe();
-  }, []);
+  const authed = !!session;
 
   const handleLogout = async () => {
+    setIsLoggingOut(true);
     try {
-      setIsLoggingOut(true);
-      
-      // First, try to sign out from Supabase
       const { error } = await supabase.auth.signOut();
-      
       if (error) {
         console.error('Logout error:', error);
         toast.error('Failed to logout. Please try again.');
-        return;
+      } else {
+        // The onAuthStateChange listener will handle state updates.
+        // We just need to navigate.
+        navigate('/login');
       }
-      
-      // Clear any local state immediately
-      setAuthed(false);
-      setIsAdmin(false);
-      setMobileMenuOpen(false);
-      
-      // Force clear any stored session data
-      localStorage.removeItem('supabase.auth.token');
-      sessionStorage.clear();
-      
-      // Force a complete page reload to ensure clean state
-      window.location.href = '/login';
-      
     } catch (error) {
-      console.error('Logout error:', error);
-      toast.error('Failed to logout. Please try again.');
-      
-      // Even if there's an error, force logout by reloading
-      setAuthed(false);
-      setIsAdmin(false);
-      setMobileMenuOpen(false);
-      window.location.href = '/login';
-      
+      console.error('Unexpected logout error:', error);
+      toast.error('An unexpected error occurred during logout.');
     } finally {
-      // Always reset the loading state
       setIsLoggingOut(false);
+      setMobileMenuOpen(false); // Close mobile menu if open
     }
   };
 

@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Shield, Mail, Lock, ArrowRight, AlertCircle } from "lucide-react";
+import { Shield, Mail, Lock, ArrowRight, AlertCircle, Eye, EyeOff } from "lucide-react";
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -14,6 +14,7 @@ const Login = () => {
   const { toast } = useToast();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const handleLogin = async () => {
@@ -28,37 +29,6 @@ const Login = () => {
 
     try {
       setLoading(true);
-      
-      // First check if user registration is approved
-      const { data: registrationData } = await supabase
-        .from('user_registrations')
-        .select('status, admin_notes')
-        .eq('email', email.trim().toLowerCase())
-        .single();
-
-      if (registrationData) {
-        if (registrationData.status === 'pending') {
-          toast({ 
-            title: "Account Pending Approval", 
-            description: "Your registration is still being reviewed by an administrator. You'll receive an email once approved.", 
-            variant: "destructive" 
-          });
-          setLoading(false);
-          return;
-        }
-        
-        if (registrationData.status === 'rejected') {
-          toast({ 
-            title: "Account Rejected", 
-            description: `Your registration was not approved. ${registrationData.admin_notes ? `Reason: ${registrationData.admin_notes}` : 'Please contact administrator for more information.'}`, 
-            variant: "destructive" 
-          });
-          setLoading(false);
-          return;
-        }
-      }
-
-      // Attempt to sign in
       const { data, error } = await supabase.auth.signInWithPassword({ 
         email: email.trim().toLowerCase(), 
         password 
@@ -88,11 +58,31 @@ const Login = () => {
       }
 
       if (data.user) {
+        // Check if the user is an admin
+        const { count, error: adminError } = await supabase
+          .from('admin_users')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', data.user.id);
+
         toast({ 
           title: "Welcome back!", 
-          description: "Successfully signed in to your account." 
+          description: "Successfully signed in to your account."
         });
-        navigate("/");
+
+        if (adminError) {
+          console.error('Error checking admin status:', adminError);
+          // Default to non-admin redirect on error
+          window.location.href = '/';
+          return;
+        }
+
+        if (count && count > 0) {
+          // User is an admin, redirect to admin dashboard
+          window.location.href = '/admin';
+        } else {
+          // Not an admin, redirect to home
+          window.location.href = '/';
+        }
       }
     } catch (err: any) {
       console.error('Login error:', err);
@@ -146,20 +136,23 @@ const Login = () => {
                 />
               </div>
               
-              <div className="space-y-2">
+              <div className="space-y-2 relative">
                 <Label htmlFor="password" className="text-sm font-medium text-foreground flex items-center gap-2">
                   <Lock className="w-4 h-4 text-muted-foreground" />
                   Password
                 </Label>
                 <Input
                   id="password"
-                  type="password"
+                  type={showPassword ? 'text' : 'password'}
                   placeholder="••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="h-12 bg-background/50 border-border/50 focus:border-primary transition-colors"
                   onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
                 />
+                <Button type="button" variant="ghost" size="icon" className="absolute right-2 top-8 h-7 w-7" onClick={() => setShowPassword(!showPassword)}>
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </Button>
               </div>
               
               <Button

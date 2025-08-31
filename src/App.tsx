@@ -12,8 +12,9 @@ import History from "./pages/History";
 import NotFound from "./pages/NotFound";
 import Signup from "./pages/Signup";
 import AdminDashboard from "./pages/AdminDashboard";
-import { useEffect, useState, Component, ReactNode } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import AdminRegistrations from "./pages/admin/Registrations";
+import { Component, ReactNode } from "react";
+import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { Analytics } from "@vercel/analytics/react";
 
 const queryClient = new QueryClient();
@@ -58,40 +59,9 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
 }
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
-  const [checking, setChecking] = useState(true);
-  const [authed, setAuthed] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { session, loading } = useAuth();
 
-  useEffect(() => {
-    const getSession = async () => {
-      try {
-        const { data, error } = await supabase.auth.getSession();
-        if (error) {
-          console.error('Session check error:', error);
-          setError(error.message);
-        }
-        setAuthed(!!data.session);
-      } catch (err) {
-        console.error('Session check failed:', err);
-        setError('Failed to check authentication status');
-      } finally {
-        setChecking(false);
-      }
-    };
-    
-    getSession();
-    
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
-      setAuthed(!!session);
-      setError(null); // Clear any previous errors
-    });
-    
-    return () => {
-      sub.subscription.unsubscribe();
-    };
-  }, []);
-
-  if (checking) {
+  if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
@@ -101,78 +71,58 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
       </div>
     );
   }
-  
-  if (error) {
+
+  if (!session) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return <>{children}</>;
+};
+
+const AdminRoute = ({ children }: { children: React.ReactNode }) => {
+  const { isAdmin, session, loading } = useAuth();
+
+  if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
-          <p className="text-red-500 mb-4">Authentication Error: {error}</p>
-          <button 
-            onClick={() => window.location.reload()} 
-            className="px-4 py-2 bg-primary text-white rounded hover:bg-primary/90"
-          >
-            Refresh Page
-          </button>
+          <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Loading...</p>
         </div>
       </div>
     );
   }
-  
-  return authed ? <>{children}</> : <Navigate to="/login" replace />;
-};
 
-const AdminRoute = ({ children }: { children: React.ReactNode }) => {
-  const [checking, setChecking] = useState(true);
-  const [isAdmin, setIsAdmin] = useState(false);
-
-  useEffect(() => {
-    const checkAdmin = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        setChecking(false);
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from('admin_users')
-        .select('*')
-        .eq('user_id', user.id)
-        .single();
-
-      setIsAdmin(!!data);
-      setChecking(false);
-    };
-
-    checkAdmin();
-  }, []);
-
-  if (checking) return null;
-  return isAdmin ? <>{children}</> : <Navigate to="/" replace />;
+  return session && isAdmin ? <>{children}</> : <Navigate to="/" replace />;
 };
 
 const App = () => (
   <ErrorBoundary>
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <Toaster />
-        <Sonner />
-        <BrowserRouter>
-          <Navbar />
-          <Routes>
-            <Route path="/" element={<Index />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/signup" element={<Signup />} />
-            <Route path="/schools" element={<ProtectedRoute><Schools /></ProtectedRoute>} />
-            <Route path="/visits/new" element={<ProtectedRoute><VisitForm /></ProtectedRoute>} />
-            <Route path="/visits/edit/:id" element={<ProtectedRoute><VisitForm /></ProtectedRoute>} />
-            <Route path="/history" element={<ProtectedRoute><History /></ProtectedRoute>} />
-            <Route path="/admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
-            {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </BrowserRouter>
+        <AuthProvider>
+          <Toaster />
+          <Sonner />
+          <BrowserRouter>
+            <Navbar />
+            <Routes>
+              <Route path="/" element={<Index />} />
+              <Route path="/login" element={<Login />} />
+              <Route path="/signup" element={<Signup />} />
+              <Route path="/schools" element={<ProtectedRoute><Schools /></ProtectedRoute>} />
+              <Route path="/visits/new" element={<ProtectedRoute><VisitForm /></ProtectedRoute>} />
+              <Route path="/visits/edit/:id" element={<ProtectedRoute><VisitForm /></ProtectedRoute>} />
+              <Route path="/history" element={<ProtectedRoute><History /></ProtectedRoute>} />
+              <Route path="/admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
+              <Route path="/admin/registrations" element={<AdminRoute><AdminRegistrations /></AdminRoute>} />
+              {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </BrowserRouter>
+        </AuthProvider>
       </TooltipProvider>
     </QueryClientProvider>
+    <Analytics />
   </ErrorBoundary>
 );
 

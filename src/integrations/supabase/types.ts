@@ -25,9 +25,9 @@ export type Database = {
         Update: { id?: string; name?: string; category?: 'SK' | 'SMK'; district?: string; address?: string | null; contact?: string | null }
       }
       visits: {
-        Row: { id: string; school_id: string; officer_id: string; visit_date: string; status: string | null; created_at: string }
-        Insert: { id?: string; school_id: string; officer_id: string; visit_date?: string; status?: string | null; created_at?: string }
-        Update: { id?: string; school_id?: string; officer_id?: string; visit_date?: string; status?: string | null; created_at?: string }
+        Row: { id: string; school_id: string; officer_id: string; visit_date: string; status: string | null; officer_name: string | null; pgb: string | null; sesi_bimbingan: string | null; created_at: string }
+        Insert: { id?: string; school_id: string; officer_id: string; visit_date?: string; status?: string | null; officer_name?: string | null; pgb?: string | null; sesi_bimbingan?: string | null; created_at?: string }
+        Update: { id?: string; school_id?: string; officer_id?: string; visit_date?: string; status?: string | null; officer_name?: string | null; pgb?: string | null; sesi_bimbingan?: string | null; created_at?: string }
       }
       visit_sections: {
         Row: { id: string; visit_id: string; section_code: '1' | '2' | '3.1' | '3.2' | '3.3'; evidences: any; remarks: string | null; score: number | null }
@@ -38,6 +38,11 @@ export type Database = {
         Row: { id: string; visit_id: string; standard_code: '1'|'2'|'3.1'|'3.2'|'3.3'; page_code: string; data: any }
         Insert: { id?: string; visit_id: string; standard_code: '1'|'2'|'3.1'|'3.2'|'3.3'; page_code: string; data?: any }
         Update: { id?: string; visit_id?: string; standard_code?: '1'|'2'|'3.1'|'3.2'|'3.3'; page_code?: string; data?: any }
+      }
+      visit_images: {
+        Row: { id: string; visit_id: string; filename: string; original_name: string; mime_type: string; size: number; description: string | null; section_code: '1'|'2'|'3.1'|'3.2'|'3.3' | null; uploaded_at: string }
+        Insert: { id?: string; visit_id: string; filename: string; original_name: string; mime_type: string; size: number; description?: string | null; section_code?: '1'|'2'|'3.1'|'3.2'|'3.3' | null; uploaded_at?: string }
+        Update: { id?: string; visit_id?: string; filename?: string; original_name?: string; mime_type?: string; size?: number; description?: string | null; section_code?: '1'|'2'|'3.1'|'3.2'|'3.3' | null; uploaded_at?: string }
       }
     }
     Views: {

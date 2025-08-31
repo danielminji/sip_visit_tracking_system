@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Shield, Mail, Lock, UserPlus, ArrowRight, User, Phone } from "lucide-react";
+import { Shield, Mail, Lock, UserPlus, ArrowRight, User, Phone, Eye, EyeOff } from "lucide-react";
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -14,12 +14,14 @@ const Signup = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [formData, setFormData] = useState({
-    email: "",
-    password: "",
-    confirm: "",
-    fullName: "",
-    phone: ""
+    fullName: '',
+    email: '',
+    phone: '',
+    password: '',
+    confirm: '',
   });
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const handleInputChange = (field: string, value: string) => {
@@ -33,73 +35,61 @@ const Signup = () => {
       toast({ title: "Invalid email", description: "Enter a valid email address.", variant: "destructive" });
       return;
     }
-    if (formData.password !== formData.confirm) {
-      toast({ title: "Passwords do not match", variant: "destructive" });
-      return;
-    }
     if (!formData.fullName.trim()) {
       toast({ title: "Full name required", description: "Please enter your full name.", variant: "destructive" });
       return;
     }
+    if (formData.password.length < 8) {
+      toast({ title: "Password too short", description: "Password must be at least 8 characters.", variant: "destructive" });
+      return;
+    }
+    if (formData.password !== formData.confirm) {
+      toast({ title: "Passwords do not match", description: "Please ensure your passwords match.", variant: "destructive" });
+      return;
+    }
+
+    setLoading(true);
 
     try {
-      setLoading(true);
-
-      // First, create the user account WITHOUT auto-confirming
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: cleanedEmail,
-        password: formData.password,
-        options: {
-          emailRedirectTo: window.location.origin,
-          data: {
-            full_name: formData.fullName.trim(),
-            phone: formData.phone.trim() || null
-          }
-        },
+      const { error } = await supabase.rpc('create_pending_user', {
+        p_full_name: formData.fullName,
+        p_email: cleanedEmail,
+        p_phone: formData.phone,
+        p_password: formData.password
       });
 
-      if (authError) throw authError;
-
-      // Then, create the registration record
-      const { error: regError } = await supabase
-        .from('user_registrations')
-        .insert({
-          email: cleanedEmail,
-          full_name: formData.fullName.trim(),
-          phone: formData.phone.trim() || null,
-          status: 'pending'
-        });
-
-      if (regError) throw regError;
-
-      // Send email notification to admin
-      try {
-        await sendAdminNotification({
-          name: formData.fullName.trim(),
-          email: cleanedEmail,
-          phone: formData.phone.trim() || undefined
-        });
-      } catch (emailError) {
-        console.error('Failed to send admin notification:', emailError);
-        // Don't fail the registration if email fails
+      if (error) {
+        throw new Error(error.message);
       }
 
-      // IMPORTANT: Don't automatically log in the user
-      // They need admin approval first
+      await supabase.auth.signOut();
+
       toast({ 
-        title: "Registration submitted successfully!", 
-        description: "Please check your email to confirm your account. Your registration is pending admin approval. You'll be notified once approved." 
+        title: "Registration Submitted!", 
+        description: "Your account is pending admin approval. You will be notified by email once it's approved.",
+        duration: 7000,
       });
-      
-      // Navigate to login page
+
+      sendAdminNotification({
+        name: formData.fullName.trim(),
+        email: cleanedEmail,
+        phone: formData.phone.trim() || undefined
+      }).catch(emailError => {
+        console.error('Failed to send admin notification:', emailError);
+      });
+
       navigate("/login");
-      
+
     } catch (err: any) {
-      const msg: string = err?.message ?? "Unexpected error";
-      let description = msg;
-      if (/invalid/i.test(msg)) description = "Email is not allowed by the current Supabase settings. Contact admin.";
-      if (/signups.*not.*allowed/i.test(msg)) description = "Sign ups are disabled. Contact admin to create your account.";
-      toast({ title: "Registration failed", description, variant: "destructive" });
+      console.error("Signup Error:", err);
+      const errorMessage = err.message || "An unexpected error occurred.";
+      toast({ 
+        title: "Registration Failed", 
+        description: errorMessage.includes('already exists') 
+          ? 'A user with this email has already registered.' 
+          : errorMessage,
+        variant: "destructive" 
+      });
     } finally {
       setLoading(false);
     }
@@ -173,34 +163,40 @@ const Signup = () => {
                 />
               </div>
 
-              <div className="space-y-2">
+              <div className="relative space-y-2">
                 <Label htmlFor="password" className="text-sm font-medium text-foreground flex items-center gap-2">
                   <Lock className="w-4 h-4 text-muted-foreground" />
                   Password *
                 </Label>
                 <Input
                   id="password"
-                  type="password"
-                  placeholder="Create a strong password"
+                  type={showPassword ? 'text' : 'password'}
+                  placeholder="Enter your password"
                   value={formData.password}
                   onChange={(e) => handleInputChange('password', e.target.value)}
                   required
                 />
+                <Button type="button" variant="ghost" size="icon" className="absolute right-2 top-7 h-7 w-7" onClick={() => setShowPassword(!showPassword)}>
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </Button>
               </div>
 
-              <div className="space-y-2">
+              <div className="relative space-y-2">
                 <Label htmlFor="confirm" className="text-sm font-medium text-foreground flex items-center gap-2">
                   <Lock className="w-4 h-4 text-muted-foreground" />
                   Confirm Password *
                 </Label>
                 <Input
                   id="confirm"
-                  type="password"
+                  type={showConfirmPassword ? 'text' : 'password'}
                   placeholder="Confirm your password"
                   value={formData.confirm}
                   onChange={(e) => handleInputChange('confirm', e.target.value)}
                   required
                 />
+                <Button type="button" variant="ghost" size="icon" className="absolute right-2 top-7 h-7 w-7" onClick={() => setShowConfirmPassword(!showConfirmPassword)}>
+                  {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </Button>
               </div>
 
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
